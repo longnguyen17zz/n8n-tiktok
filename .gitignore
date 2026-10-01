@@ -1,0 +1,11 @@
+node_modules/
+.env
+.env.local
+.env.production
+google_tokens.json
+chrome_profile/
+temp/
+logos/logo_*
+.tempmediaStorage/
+public/output/
+*.log

@@ -1,0 +1,828 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>AI Product Video Generator - Studio Review Shopee & TikTok</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="index.css?v=8">
+</head>
+<body>
+  <div class="app-container">
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <polygon points="23 7 16 12 23 17 23 7"></polygon>
+            <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <h2>VideoGen <span class="badge-ai">AI</span></h2>
+          <p>Shopee & TikTok Studio</p>
+        </div>
+        <button class="btn-close-sidebar mobile-only" id="btnCloseSidebar" aria-label="Đóng menu">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+
+      <nav class="nav-menu">
+        <a href="#dashboard" class="nav-item active" data-tab="dashboard">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="7" height="7"></rect>
+            <rect x="14" y="3" width="7" height="7"></rect>
+            <rect x="14" y="14" width="7" height="7"></rect>
+            <rect x="3" y="14" width="7" height="7"></rect>
+          </svg>
+          <span>Tổng quan</span>
+        </a>
+
+        <a href="#studio" class="nav-item" data-tab="studio">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <polygon points="10 8 16 12 10 16 10 8"></polygon>
+          </svg>
+          <span>Studio Tạo Video</span>
+          <span class="badge-new">0 Credit</span>
+        </a>
+
+        <a href="#queue" class="nav-item" data-tab="queue">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="16" y1="13" x2="8" y2="13"></line>
+            <line x1="16" y1="17" x2="8" y2="17"></line>
+            <polyline points="10 9 9 9 8 9"></polyline>
+          </svg>
+          <span>Hàng đợi Sheet</span>
+        </a>
+
+        <a href="#tiktok" class="nav-item" data-tab="tiktok">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M9 12a4 4 0 1 0 4 4V4a5 5 0 0 0 5 5"></path>
+          </svg>
+          <span>Đăng TikTok</span>
+          <span class="badge-count" id="sidebarTikTokCount">0</span>
+        </a>
+
+        <a href="#gallery" class="nav-item" data-tab="gallery">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect>
+            <line x1="7" y1="2" x2="7" y2="22"></line>
+            <line x1="17" y1="2" x2="17" y2="22"></line>
+            <line x1="2" y1="12" x2="22" y2="12"></line>
+          </svg>
+          <span>Kho Video</span>
+          <span class="badge-count" id="sidebarVideoCount">0</span>
+        </a>
+
+        <a href="#logs" class="nav-item" data-tab="logs">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="4 17 10 11 4 5"></polyline>
+            <line x1="12" y1="19" x2="20" y2="19"></line>
+          </svg>
+          <span>Nhật ký (Logs)</span>
+        </a>
+
+        <a href="#settings" class="nav-item" data-tab="settings">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+          <span>Cấu hình</span>
+        </a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="user-card">
+          <div class="user-avatar">U</div>
+          <div class="user-info">
+            <span class="user-name">Gói Ultra 20x</span>
+            <span class="user-quota">1.000 video / tháng</span>
+          </div>
+          <div class="status-indicator online" title="Tài khoản sẵn sàng"></div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- SIDEBAR OVERLAY FOR MOBILE -->
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <!-- MAIN CONTENT -->
+    <main class="main-content">
+      <!-- TOPBAR -->
+      <header class="topbar">
+        <div class="topbar-left">
+          <button id="btnMobileMenu" class="btn-mobile-menu mobile-only" aria-label="Mở Menu" title="Menu">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <line x1="3" y1="12" x2="21" y2="12"></line>
+              <line x1="3" y1="6" x2="21" y2="6"></line>
+              <line x1="3" y1="18" x2="21" y2="18"></line>
+            </svg>
+          </button>
+          <div class="topbar-title-wrap">
+            <h1 id="pageTitle">Tổng quan hệ thống</h1>
+            <span class="breadcrumb">Video Review Generator &bull; Tự động hóa bán hàng</span>
+          </div>
+        </div>
+
+        <div class="topbar-right">
+          <div class="engine-badge">
+            <span class="dot-pulse"></span>
+            <span>Engine: <strong>Google Vids (0 Credit)</strong></span>
+          </div>
+
+          <button id="btnOpenChrome" class="btn btn-secondary btn-sm" title="Mở Chrome để đăng nhập hoặc kiểm tra session">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"></circle>
+              <circle cx="12" cy="12" r="4"></circle>
+            </svg>
+            <span>Đăng nhập Chrome</span>
+          </button>
+
+          <button id="btnConnectDrive" class="btn btn-secondary btn-sm" onclick="connectGoogleDrive()" title="Đăng nhập Google Drive OAuth2 giống n8n">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+            </svg>
+            <span id="driveConnectText">Đăng nhập Drive (OAuth)</span>
+          </button>
+
+          <button id="btnToggleWorker" class="btn btn-primary btn-sm">
+            <span class="worker-icon play-icon">▶</span>
+            <span id="workerStatusText">Bật Tự Động Quét</span>
+          </button>
+        </div>
+      </header>
+
+      <!-- VIEW: DASHBOARD -->
+      <section id="view-dashboard" class="content-view active">
+        <!-- KPI METRICS -->
+        <div class="metrics-grid">
+          <div class="metric-card">
+            <div class="metric-header">
+              <span class="metric-title">Hạn mức tháng (Ultra)</span>
+              <div class="metric-icon icon-purple">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+                </svg>
+              </div>
+            </div>
+            <div class="metric-body">
+              <span class="metric-value">1.000</span>
+              <span class="metric-unit">video / 0 Credit</span>
+            </div>
+            <div class="metric-footer">
+              <div class="progress-bar">
+                <div class="progress-fill" style="width: 12%"></div>
+              </div>
+              <span class="metric-subtext">Đã dùng 12 video trong tháng này</span>
+            </div>
+          </div>
+
+          <div class="metric-card">
+            <div class="metric-header">
+              <span class="metric-title">Hàng đợi xử lý</span>
+              <div class="metric-icon icon-cyan">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <polyline points="12 6 12 12 16 14"></polyline>
+                </svg>
+              </div>
+            </div>
+            <div class="metric-body">
+              <span class="metric-value" id="metricQueueCount">1</span>
+              <span class="metric-unit">sản phẩm chờ</span>
+            </div>
+            <div class="metric-footer">
+              <span class="metric-subtext text-success">&bull; Đồng bộ Google Sheets tự động</span>
+            </div>
+          </div>
+
+          <div class="metric-card">
+            <div class="metric-header">
+              <span class="metric-title">Tỷ lệ thành công</span>
+              <div class="metric-icon icon-emerald">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                  <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                </svg>
+              </div>
+            </div>
+            <div class="metric-body">
+              <span class="metric-value">98.5%</span>
+              <span class="metric-unit">tỉ lệ render</span>
+            </div>
+            <div class="metric-footer">
+              <span class="metric-subtext">Chuẩn dọc 9:16 &bull; Người thật cử động</span>
+            </div>
+          </div>
+
+          <div class="metric-card">
+            <div class="metric-header">
+              <span class="metric-title">Thời gian tạo TB</span>
+              <div class="metric-icon icon-amber">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+                </svg>
+              </div>
+            </div>
+            <div class="metric-body">
+              <span class="metric-value">45s</span>
+              <span class="metric-unit">/ video 10s</span>
+            </div>
+            <div class="metric-footer">
+              <span class="metric-subtext">Google Vids Omni Engine</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- DASHBOARD SPLIT -->
+        <div class="dashboard-grid">
+          <!-- CURRENT PROCESSING STATUS -->
+          <div class="glass-panel">
+            <div class="panel-header">
+              <div class="panel-title">
+                <span class="dot-active"></span>
+                <h3>Tiến trình tạo video hiện tại</h3>
+              </div>
+              <button class="btn btn-ghost btn-sm" onclick="fetchStatus()">Làm mới</button>
+            </div>
+
+            <div id="processingCard" class="processing-card empty">
+              <div class="empty-state">
+                <div class="empty-icon">☕</div>
+                <h4>Hệ thống đang rảnh rỗi</h4>
+                <p>Bật tự động quét hoặc bấm nút "Tạo video ngay" để bắt đầu sinh video sản phẩm mới.</p>
+                <button class="btn btn-primary btn-sm" onclick="switchTab('studio')">Mở Studio Tạo Video</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- MINI LOG STREAM -->
+          <div class="glass-panel">
+            <div class="panel-header">
+              <div class="panel-title">
+                <h3>Nhật ký hoạt động thời gian thực</h3>
+              </div>
+              <a href="#logs" class="link-action" onclick="switchTab('logs')">Xem tất cả &rarr;</a>
+            </div>
+
+            <div class="mini-logs-container" id="miniLogsList">
+              <div class="log-line info"><span class="log-time">16:40:00</span> [INFO] Khởi động hệ thống Video Generator UI hoàn tất.</div>
+              <div class="log-line success"><span class="log-time">16:40:02</span> [SUCCESS] Đã kết nối Chrome Profile thành công.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW: STUDIO TẠO VIDEO -->
+      <section id="view-studio" class="content-view">
+        <div class="studio-container">
+          <div class="studio-form-card glass-panel">
+            <div class="panel-header">
+              <div class="panel-title">
+                <span class="badge-tag">Google Vids Engine</span>
+                <h2>Tạo video review sản phẩm bằng AI</h2>
+              </div>
+              <span class="credit-pill">0 Credit &bull; Gói Ultra</span>
+            </div>
+
+            <form id="createVideoForm">
+              <div class="form-group">
+                <label for="inputProductName">Tên sản phẩm <span class="required">*</span></label>
+                <div class="input-with-button">
+                  <input type="text" id="inputProductName" placeholder="Ví dụ: Bộ dao thớt kháng khuẩn đa năng" required>
+                  <button type="button" id="btnSuggestAI" class="btn btn-secondary">
+                    <span>✨ AI Viết Kịch Bản</span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="inputScript">Kịch bản Review / Yêu cầu chuyển động</label>
+                <textarea id="inputScript" rows="4" placeholder="Nhập mô tả hành động (Ví dụ: người mẫu giới thiệu tự nhiên, cầm thớt trên tay và giơ ngón tay cái like mỉm cười...)"></textarea>
+                <span class="input-hint">💡 Mẹo: Yêu cầu hành động cụ thể như "cầm sản phẩm", "mỉm cười", "giơ tay like" giúp video sinh động hơn.</span>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group col-6">
+                  <label>Khung hình (Tỷ lệ)</label>
+                  <div class="pill-selector">
+                    <label class="pill-option active">
+                      <input type="radio" name="ratio" value="9:16" checked>
+                      <span>📱 9:16 Dọc (TikTok/Shopee)</span>
+                    </label>
+                    <label class="pill-option">
+                      <input type="radio" name="ratio" value="16:9">
+                      <span>🖥️ 16:9 Ngang</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div class="form-group col-6">
+                  <label>Thời lượng video</label>
+                  <div class="pill-selector">
+                    <label class="pill-option active">
+                      <input type="radio" name="duration" value="10s" checked>
+                      <span>⏱️ 10 giây (Tối ưu)</span>
+                    </label>
+                    <label class="pill-option">
+                      <input type="radio" name="duration" value="6s">
+                      <span>⏱️ 6 giây</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div class="studio-actions">
+                <button type="submit" id="btnSubmitCreate" class="btn btn-primary btn-lg">
+                  <span class="btn-icon">⚡</span>
+                  <span>Bắt đầu tạo video ngay (0 Credit)</span>
+                </button>
+              </div>
+            </form>
+          </div>
+
+          <!-- STUDIO PREVIEW / PROGRESS -->
+          <div class="studio-preview-card glass-panel">
+            <div class="panel-header">
+              <div class="panel-title">
+                <h3>Trạng thái Studio</h3>
+              </div>
+              <span id="studioBadge" class="status-badge ready">Sẵn sàng</span>
+            </div>
+
+            <div class="stepper" id="workflowStepper">
+              <div class="step-item active" id="step-1">
+                <div class="step-circle">1</div>
+                <div class="step-content">
+                  <h4>Khởi tạo & Phân tích</h4>
+                  <p>Phân tích đặc tính sản phẩm & tạo prompt tối ưu</p>
+                </div>
+              </div>
+
+              <div class="step-item" id="step-2">
+                <div class="step-circle">2</div>
+                <div class="step-content">
+                  <h4>Google Vids Engine</h4>
+                  <p>Kích hoạt mô hình Gemini Omni render video người thật</p>
+                </div>
+              </div>
+
+              <div class="step-item" id="step-3">
+                <div class="step-circle">3</div>
+                <div class="step-content">
+                  <h4>Hậu kỳ & Chèn Logo</h4>
+                  <p>FFmpeg chuẩn hóa khung hình và đóng watermark</p>
+                </div>
+              </div>
+
+              <div class="step-item" id="step-4">
+                <div class="step-circle">4</div>
+                <div class="step-content">
+                  <h4>Hoàn thành & Lưu trữ</h4>
+                  <p>Tải lên Google Drive & đồng bộ Google Sheets</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="preview-placeholder" id="previewArea">
+              <div class="phone-frame">
+                <div class="phone-screen">
+                  <div class="placeholder-content">
+                    <span class="play-circle">🎬</span>
+                    <p>Video sau khi tạo sẽ hiển thị tại đây</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW: HÀNG ĐỢI GOOGLE SHEET -->
+      <section id="view-queue" class="content-view">
+        <div class="glass-panel">
+          <div class="panel-header">
+            <div class="panel-title">
+              <h2>Danh sách sản phẩm từ Google Sheets</h2>
+            </div>
+            <div class="panel-actions">
+              <button class="btn btn-secondary btn-sm" onclick="fetchQueue()">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M23 4v6h-6"></path>
+                  <path d="M1 20v-6h6"></path>
+                  <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                </svg>
+                <span>Đồng bộ Sheet</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- SCHEDULE CONTROLLER BAR -->
+          <div class="schedule-control-card">
+            <div class="schedule-left">
+              <div class="schedule-badge-row">
+                <span id="scheduleStatusDot" class="status-indicator offline"></span>
+                <strong id="scheduleStatusTitle">Lên lịch: Đã tắt</strong>
+                <span id="scheduleCountdownBadge" class="countdown-badge" style="display: none;">Quét lại sau: <b id="countdownSec">0</b>s</span>
+              </div>
+              <div class="schedule-subtext" id="scheduleDetailText">
+                Tự động quét Google Sheet để tạo video theo lịch hẹn &amp; chu kỳ thiết lập.
+              </div>
+            </div>
+
+            <div class="schedule-right">
+              <div class="schedule-setting-item">
+                <label>Chu kỳ quét:</label>
+                <select id="scheduleIntervalSelect" class="input-sm select-sm" onchange="updateScheduleInterval()">
+                  <option value="30">30 giây</option>
+                  <option value="60" selected>1 phút</option>
+                  <option value="120">2 phút</option>
+                  <option value="300">5 phút</option>
+                  <option value="600">10 phút</option>
+                  <option value="900">15 phút</option>
+                  <option value="1800">30 phút</option>
+                </select>
+              </div>
+
+              <div class="schedule-setting-item checkbox-item" title="Khi còn nhiều hàng Chờ Tạo, tự động làm liên tiếp từng hàng một">
+                <label>
+                  <input type="checkbox" id="scheduleContinuous" checked onchange="updateScheduleContinuous()">
+                  <span>Làm liên tiếp khi còn hàng</span>
+                </label>
+              </div>
+
+              <div class="schedule-action-btns">
+                <button class="btn btn-secondary btn-sm" onclick="triggerRunNow()" title="Quét và bắt đầu chạy ngay lập tức">
+                  <span>⚡ Quét ngay</span>
+                </button>
+
+                <button id="btnMainScheduleToggle" class="btn btn-primary btn-sm" onclick="toggleSchedule()">
+                  <span id="btnMainScheduleText">▶ Bật Lên Lịch</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="table-responsive">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Hàng</th>
+                  <th>Tên Sản Phẩm</th>
+                  <th>Kịch bản Content</th>
+                  <th>Ảnh đầu vào</th>
+                  <th>Trạng Thái</th>
+                  <th>Hành động</th>
+                </tr>
+              </thead>
+              <tbody id="queueTableBody">
+                <tr>
+                  <td colspan="6" class="text-center py-4 text-muted">Đang tải dữ liệu từ Google Sheets...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW: ĐĂNG TIKTOK -->
+      <section id="view-tiktok" class="content-view">
+        <div class="glass-panel">
+          <div class="panel-header">
+            <div class="panel-title">
+              <h2>Video chờ đăng TikTok</h2>
+              <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 4px;">Các hàng đã tạo video xong (đọc từ Google Sheet), đăng trực tiếp lên kênh TikTok kèm giỏ hàng TikTok Shop.</p>
+            </div>
+            <div class="panel-actions">
+              <button class="btn btn-secondary btn-sm" onclick="fetchTikTokQueue()">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M23 4v6h-6"></path>
+                  <path d="M1 20v-6h6"></path>
+                  <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                </svg>
+                <span>Làm mới</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="table-responsive">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Hàng</th>
+                  <th>Tên Sản Phẩm</th>
+                  <th>Video</th>
+                  <th>Giỏ hàng (ID SP)</th>
+                  <th>Trạng thái đăng</th>
+                  <th>Hành động</th>
+                </tr>
+              </thead>
+              <tbody id="tiktokQueueTableBody">
+                <tr>
+                  <td colspan="6" class="text-center py-4 text-muted">Đang tải dữ liệu từ Google Sheets...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW: KHO VIDEO -->
+      <section id="view-gallery" class="content-view">
+        <div class="glass-panel">
+          <div class="panel-header">
+            <div class="panel-title">
+              <h2>Kho Video Thành Phẩm trên Google Drive ☁️</h2>
+              <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 4px;">Đồng bộ trực tiếp từ thư mục Google Drive (Video-Veo3)</p>
+            </div>
+            <span class="badge-tag" id="galleryCountTag">0 video trên Drive</span>
+          </div>
+
+          <div class="video-grid" id="videoGalleryGrid">
+            <!-- Video Cards Rendered Here -->
+            <div class="empty-state">
+              <div class="empty-icon">📁</div>
+              <h4>Chưa có video nào được lưu trong thư mục</h4>
+              <p>Hãy tạo video đầu tiên từ tab Studio hoặc chạy tự động từ Google Sheet.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW: NHẬT KÝ LOGS -->
+      <section id="view-logs" class="content-view">
+        <div class="glass-panel terminal-panel">
+          <div class="panel-header">
+            <div class="terminal-dots">
+              <span class="dot red"></span>
+              <span class="dot yellow"></span>
+              <span class="dot green"></span>
+              <span class="terminal-title">System Console Logs</span>
+            </div>
+            <button class="btn btn-ghost btn-sm" onclick="clearLogs()">Xóa màn hình</button>
+          </div>
+
+          <div class="terminal-body" id="terminalLogBody">
+            <!-- Log entries will be inserted here -->
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW: CÀI ĐẶT -->
+      <section id="view-settings" class="content-view">
+        <div class="glass-panel">
+          <div class="panel-header">
+            <div class="panel-title">
+              <h2>Cấu hình & Tích hợp</h2>
+            </div>
+          </div>
+
+          <div class="settings-grid">
+            <div class="settings-card">
+              <h3>Tài khoản Google Ultra & Chrome Session</h3>
+              <p class="settings-desc">Kết nối phiên đăng nhập tài khoản Ultra để chạy tự động Google Vids với hạn mức 1000 video/tháng.</p>
+              <div class="settings-status">
+                <span class="status-indicator online"></span>
+                <span>Chrome Profile: <code>chrome_profile/</code></span>
+              </div>
+              <button class="btn btn-secondary mt-3" onclick="openChromeLogin()">Đăng nhập lại tài khoản Google</button>
+            </div>
+
+            <div class="settings-card highlight-card">
+              <div class="card-badge">Chuẩn như n8n</div>
+              <h3>Đăng nhập Google Drive (OAuth2)</h3>
+              <p class="settings-desc">Kết nối trực tiếp tài khoản Google chính chủ (<code>longhq17@gmail.com</code> / <code>trankaka024@gmail.com</code>) để upload video thẳng vào Google Drive không lo giới hạn dung lượng.</p>
+              
+              <div id="driveOAuthStatusArea" class="mt-3">
+                <div class="settings-status">
+                  <span id="driveOAuthDot" class="status-indicator offline"></span>
+                  <span id="driveOAuthEmail">Chưa kết nối tài khoản Google Drive</span>
+                </div>
+              </div>
+
+              <div id="driveOAuthConfigForm" class="mt-3" style="display: none;">
+                <div class="form-group">
+                  <label>Google OAuth Client ID</label>
+                  <input type="text" id="oauthClientId" class="input-sm" placeholder="...apps.googleusercontent.com">
+                </div>
+                <div class="form-group mt-2">
+                  <label>Google OAuth Client Secret</label>
+                  <input type="password" id="oauthClientSecret" class="input-sm" placeholder="GOCSPX-...">
+                </div>
+                <p class="form-help text-muted text-xs mt-1">
+                  * Redirect URI cần thêm trên Google Cloud Console: <br>
+                  <code>http://localhost:3000/api/auth/google/callback</code>
+                </p>
+                <div class="actions-row mt-3">
+                  <button class="btn btn-primary btn-sm" onclick="saveOAuthConfigAndLogin()">Lưu & Đăng nhập ngay</button>
+                </div>
+              </div>
+
+              <div id="driveOAuthActionArea" class="mt-3">
+                <button id="btnOAuthLogin" class="btn btn-primary mt-2" onclick="connectGoogleDrive()">
+                  <span>🔑 Đăng nhập tài khoản Google Drive</span>
+                </button>
+                <button id="btnOAuthDisconnect" class="btn btn-ghost btn-sm text-danger mt-2" style="display: none;" onclick="disconnectGoogleDrive()">
+                  <span>Ngắt kết nối</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="settings-card">
+              <h3>Google Sheets & Thư mục Drive đích</h3>
+              <p class="settings-desc">Quản lý hàng đợi sản phẩm và tự động upload video hoàn thành.</p>
+              <div class="form-group mt-2">
+                <label>Sheet Document ID</label>
+                <input type="text" class="input-sm" value="1PmES7DW57525MR2j6Ab4CjZDrvgPmr3CWZcuM0eMmVw" readonly>
+              </div>
+              <div class="form-group mt-2">
+                <label>Drive Output Folder ID</label>
+                <input type="text" class="input-sm" value="1J5GhIPlemmMWPmxWhrsRvtcUJAlo3SCD" readonly>
+              </div>
+            </div>
+
+            <div class="settings-card">
+              <h3>Hệ thống Lên lịch Quét Tự động (Schedule)</h3>
+              <p class="settings-desc">Cấu hình chu kỳ và khung giờ hệ thống tự động quét Google Sheet để tạo video.</p>
+              
+              <div class="form-group mt-2">
+                <label>Chu kỳ quét định kỳ</label>
+                <select id="settingsScheduleInterval" class="input-sm select-sm" onchange="saveScheduleConfigFromSettings()">
+                  <option value="30">30 giây</option>
+                  <option value="60" selected>1 phút</option>
+                  <option value="120">2 phút</option>
+                  <option value="300">5 phút</option>
+                  <option value="600">10 phút</option>
+                  <option value="900">15 phút</option>
+                  <option value="1800">30 phút</option>
+                </select>
+              </div>
+
+              <div class="form-group mt-2">
+                <label class="checkbox-label" style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem;">
+                  <input type="checkbox" id="settingsScheduleContinuous" checked onchange="saveScheduleConfigFromSettings()">
+                  <span>Chế độ làm liên tiếp (xong 1 video tự chuyển ngay sang hàng kế tiếp)</span>
+                </label>
+              </div>
+
+              <div class="form-group mt-2">
+                <label class="checkbox-label" style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem;">
+                  <input type="checkbox" id="settingsScheduleTimeRange" onchange="toggleTimeRangeInputs(); saveScheduleConfigFromSettings();">
+                  <span>Chỉ chạy trong khung giờ hẹn trước (Time Window)</span>
+                </label>
+                <div id="settingsTimeRangeInputs" style="display: none; margin-top: 8px; gap: 8px; align-items: center;">
+                  <span>Từ:</span>
+                  <input type="number" id="settingsStartHour" min="0" max="23" value="8" style="width: 65px;" class="input-sm" onchange="saveScheduleConfigFromSettings()">
+                  <span>h đến:</span>
+                  <input type="number" id="settingsEndHour" min="0" max="23" value="22" style="width: 65px;" class="input-sm" onchange="saveScheduleConfigFromSettings()">
+                  <span>h</span>
+                </div>
+              </div>
+
+              <div class="settings-status mt-3">
+                <span id="settingsScheduleDot" class="status-indicator offline"></span>
+                <span id="settingsScheduleStatus">Trạng thái: Đã tạm dừng</span>
+              </div>
+            </div>
+
+            <div class="settings-card">
+              <h3>Đăng bài TikTok Trực tiếp (Standalone Engine)</h3>
+              <p class="settings-desc">Đăng video thành phẩm kèm giỏ hàng TikTok Shop trực tiếp từ hệ thống, hoàn toàn không cần chạy n8n.</p>
+              
+              <div class="settings-status mt-2">
+                <span id="tiktokEngineDot" class="status-indicator offline"></span>
+                <span id="tiktokEngineStatusText">Trạng thái: Chưa cấu hình TikTok Session</span>
+              </div>
+
+              <div class="form-group mt-3">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                  <label style="margin-bottom: 0;">TikTok Session (JSON)</label>
+                  <button type="button" class="btn btn-ghost btn-sm" style="font-size: 11px; padding: 2px 6px;" onclick="toggleTikTokSessionVisibility()">👁️ Hiện/Ẩn</button>
+                </div>
+                <textarea id="tiktokSessionInput" class="input-sm" style="width: 100%; min-height: 90px; font-family: monospace; font-size: 11px; display: none;" placeholder='Dán chuỗi Session JSON của TikTok vào đây (từ tiện ích cUrl/WebSocket hoặc export từ n8n)...'></textarea>
+                <div id="tiktokSessionMasked" style="font-size: 12px; color: var(--text-muted); background: rgba(0,0,0,0.25); border: 1px dashed rgba(255,255,255,0.15); padding: 8px 12px; border-radius: 6px;">
+                  <span id="tiktokSessionPlaceholderText">Chưa có session được lưu. Bấm "Hiện/Ẩn" để dán session mới.</span>
+                </div>
+                <small class="text-muted" style="display: block; margin-top: 4px; font-size: 11px;">
+                  💡 Lấy từ extension cUrl &amp; WebSocket hoặc copy giá trị từ credential "TikTok Credential account" của bạn.
+                </small>
+              </div>
+
+              <div class="form-group mt-3">
+                <label>Proxy URL (Tùy chọn)</label>
+                <input type="text" id="tiktokProxyInput" class="input-sm" placeholder="http://user:pass@proxy.example.com:8080 (để trống nếu không dùng)">
+              </div>
+
+              <div class="form-group mt-2">
+                <label class="checkbox-label" style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem;">
+                  <input type="checkbox" id="tiktokAutoPublishCheck">
+                  <span>Tự động đăng TikTok ngay khi tạo xong video (Auto-Publish)</span>
+                </label>
+              </div>
+
+              <div style="display: flex; gap: 8px; margin-top: 14px;">
+                <button class="btn btn-primary btn-sm" onclick="saveTikTokConfig()">💾 Lưu Cấu hình TikTok</button>
+              </div>
+            </div>
+
+            <div class="settings-card">
+              <h3>Telegram Bot</h3>
+              <p class="settings-desc">Tự động gửi thông báo kèm đường link xem video ngay khi hoàn tất.</p>
+              <div class="settings-status mt-2">
+                <span class="status-indicator online"></span>
+                <span>Chat ID: <code>5683477257</code></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- VIDEO MODAL PLAYER -->
+  <div id="videoModal" class="modal-backdrop">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 id="modalVideoTitle">Xem trước Video</h3>
+        <button class="btn-close" onclick="closeVideoModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-video-container">
+          <video id="modalVideoPlayer" controls autoplay loop playsinline></video>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <a id="btnDownloadVideo" href="#" download class="btn btn-primary">
+          <span>💾 Tải video MP4</span>
+        </a>
+        <a id="btnDriveOpenVideo" href="#" target="_blank" class="btn btn-secondary" style="display: none;">
+          <span>☁️ Xem trên Google Drive</span>
+        </a>
+        <button class="btn btn-ghost" onclick="closeVideoModal()">Đóng</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MOBILE BOTTOM NAVIGATION BAR -->
+  <nav class="mobile-bottom-nav mobile-only">
+    <a href="#dashboard" class="bottom-nav-item active" data-tab="dashboard">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="3" y="3" width="7" height="7"></rect>
+        <rect x="14" y="3" width="7" height="7"></rect>
+        <rect x="14" y="14" width="7" height="7"></rect>
+        <rect x="3" y="14" width="7" height="7"></rect>
+      </svg>
+      <span>Tổng quan</span>
+    </a>
+    <a href="#studio" class="bottom-nav-item" data-tab="studio">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="10"></circle>
+        <polygon points="10 8 16 12 10 16 10 8"></polygon>
+      </svg>
+      <span>Studio</span>
+    </a>
+    <a href="#queue" class="bottom-nav-item" data-tab="queue">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+        <polyline points="14 2 14 8 20 8"></polyline>
+        <line x1="16" y1="13" x2="8" y2="13"></line>
+        <line x1="16" y1="17" x2="8" y2="17"></line>
+      </svg>
+      <span>Hàng đợi</span>
+    </a>
+    <a href="#tiktok" class="bottom-nav-item" data-tab="tiktok">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M9 12a4 4 0 1 0 4 4V4a5 5 0 0 0 5 5"></path>
+      </svg>
+      <span>TikTok</span>
+    </a>
+    <a href="#gallery" class="bottom-nav-item" data-tab="gallery">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect>
+        <line x1="7" y1="2" x2="7" y2="22"></line>
+        <line x1="17" y1="2" x2="17" y2="22"></line>
+        <line x1="2" y1="12" x2="22" y2="12"></line>
+      </svg>
+      <span>Kho Video</span>
+    </a>
+    <button class="bottom-nav-item bottom-nav-menu-btn" id="btnBottomMore" aria-label="Thêm">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="1"></circle>
+        <circle cx="19" cy="12" r="1"></circle>
+        <circle cx="5" cy="12" r="1"></circle>
+      </svg>
+      <span>Menu</span>
+    </button>
+  </nav>
+
+  <script src="app.js?v=12"></script>
+</body>
+</html>

@@ -1,0 +1,723 @@
+{
+  "name": "TIKTOKsongkhoecungthaomoc",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 50 7,11,13,15,19 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        1632,
+        -576
+      ],
+      "id": "f100e2eb-505a-4880-b7d7-0429498dc6cc",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "tiktok-upload",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        2080,
+        -750
+      ],
+      "id": "e5b871c2-9bf3-461d-a94f-22a46cbb1599",
+      "name": "Webhook Trigger",
+      "webhookId": "9b7f5872-cb7d-4ba6-8c46-f94d9354924a"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1PmES7DW57525MR2j6Ab4CjZDrvgPmr3CWZcuM0eMmVw",
+          "mode": "list",
+          "cachedResultName": "Review Sản Phẩm",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1PmES7DW57525MR2j6Ab4CjZDrvgPmr3CWZcuM0eMmVw/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1515331998,
+          "mode": "list",
+          "cachedResultName": "Thiết Lập",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1PmES7DW57525MR2j6Ab4CjZDrvgPmr3CWZcuM0eMmVw/edit#gid=1515331998"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "Trạng Thái",
+              "lookupValue": "Thành Công"
+            },
+            {
+              "lookupColumn": "Trạng Thái upload",
+              "lookupValue": "Chờ Đăng"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2304,
+        -576
+      ],
+      "id": "a637ec95-d972-4a57-858f-e9c36b2fcee2",
+      "name": "Thiết Lập",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "0hq9s1sdokm5UYHK",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        2528,
+        -576
+      ],
+      "id": "9993cd40-3fbb-426c-a058-25279863a9d3",
+      "name": "Limit"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "04f26f47-382d-44dd-a72b-cc9a7d4ab2bf",
+              "name": "Cookie",
+              "value": "__Host-next-auth.csrf-token=7e4b3d2e679e3f16d7a06129c4367004496bb63b413a02f548d743d83e5eae1e%7Cfda5038738c3e21f76b19671616e2150fbf0cc02a95b284d56a575a6522079e5; _ga=GA1.1.1657399233.1772981999; __Secure-next-auth.callback-url=https%3A%2F%2Flabs.google%2Ffx%2Ftools%2Fflow; email=veotl119%40vcduu.dohaticammo.asia; EMAIL=%22veotl119%40vcduu.dohaticammo.asia%22; _ga_X2GNH8R5NS=GS2.1.s1772981999$o1$g1$t1772982027$j32$l0$h300114754; __Secure-next-auth.session-token=eyJhbGciOiJkaXIiLCJlbmMiOiJBMjU2R0NNIn0..DP_IcqrQ8waa-h6B.llKzBszhn3DyFc8idDedavgzcVX9x6ET4kVCTRPt4qVreMzv9hXq_nji6BZEzNb1Q3hdYnXKgomxgMzG6CEpIhwvM2JSlaZJZYZsVqY2jYl1hiG4DsziaCan0V-b0uzFNRmDg9Csky1mxLQrHv5_1JwUErRcXLV9x4VFUFpAaDRh7Uk5Y_dVTRsDKgkhITXEGxIN60KN1_33MnYxbQqXwBjY0JXrpJdweRikKCghUjyEtm4jbUf3t8l0rX_naiDwzRWYYYY133N4HQ4DVww37UMsvZ7TLPDiUR16rNWdplZVpvOAtYq2Y7avRxr6sSFhNGmApuhnWGiXZ3Vfd9OQmbyuvdIKsOXE3HAamTuh6OjUfQRrnsq6fhTR6mEERQW1aOMiNaJpD5EggxfjfOnGcFsc70Bna_6KArmKgOOQLqoDUHRjbiYABxZoQoUWX0sxMHU24q9tA5uRECX4B9CeZd5YF6STbVU3pVhd4rtQjijUVzUnOUDN2ajuCp5xd94pjsB8Ynp0p2UU9evK8kbmi1W2gyGg1ucuVQZqqoLAut3aEP0NK5ASPHaRx07xQ9c8crjznin41mlJNvwtqtNVZZon4Z3awjvBjtwB9QaBqqZiiinPbZuG0LQAuRp82N_74JAUlkI0n233Prx5wmTLERyLlS2XjmFeCUQXFGcl4G2em8bch8PGxwpSWssH4fyqXrIAy5j1OCbA0fd8kemRUQgEmIuBoIGIzcLMK9wHSJVFHhwqopz_Hv59GMF6xGLTqq_UYUD0emQdOv2Wp-3l9n0ifHjIP8sY6vHcyNTR3RtKofVdEbGoI4vojpD8Ed3eRpkqQ4IplDEblyImxuVxWZVO_byXF7pM63Ad1AnqHvJmsQRzR89LghlJu0r1RqURkxoRJycf7gJSHZrJLYJaYONPWTYF-jaogZ0wkj0F_pT6ui2ORCEj5gkYr8qWFAl34vEX3U4-3k4VCvjHN1P8RadL091lkPoZ7qs.zYZs8iz2JuhSK_QBDo8zUw",
+              "type": "string"
+            },
+            {
+              "id": "491c3468-3ca8-478c-8dda-c6123b995b96",
+              "name": "Nanoai ",
+              "value": "nano_8LmmyWdsxOyn3MZ85vlXHcCcFP3hO4pPPXHNikJgt0T3PIcRjeZKafhcNrdfMQHA",
+              "type": "string"
+            },
+            {
+              "id": "e9205a0a-3282-4755-b906-de41a7a89a7d",
+              "name": "Gemini ",
+              "value": "AIzaSyAV-RepZuL3S9wpZoN0cLotYll0PQc63yk",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2752,
+        -576
+      ],
+      "id": "1103e863-686f-4c48-a0cd-3573b2f09204",
+      "name": "Cookie & Captcha"
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $('Thiết Lập').first().json['Link Video'] }}",
+          "mode": "url"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        2976,
+        -576
+      ],
+      "id": "c2974308-b8bc-49d5-b3ff-1d52fd8d1d73",
+      "name": "Binary1",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "lXWvXpR4jJA3lHXs",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1PmES7DW57525MR2j6Ab4CjZDrvgPmr3CWZcuM0eMmVw",
+          "mode": "list",
+          "cachedResultName": "Review Sản Phẩm",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1PmES7DW57525MR2j6Ab4CjZDrvgPmr3CWZcuM0eMmVw/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1515331998,
+          "mode": "list",
+          "cachedResultName": "Thiết Lập",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1PmES7DW57525MR2j6Ab4CjZDrvgPmr3CWZcuM0eMmVw/edit#gid=1515331998"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "={{ $('Thiết Lập').first().json.row_number }}",
+            "Note": "={{ new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour12: false }) }}",
+            "Trạng Thái upload": "Đã Đăng",
+            "Phân Tích SP": "={{ $('Thiết Lập').item.json['Phân Tích SP'] }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "Chủ Đề",
+              "displayName": "Chủ Đề",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Số Prompt",
+              "displayName": "Số Prompt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Link Sản Phẩm",
+              "displayName": "Link Sản Phẩm",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Link Background",
+              "displayName": "Link Background",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Link Mẫu Ảnh",
+              "displayName": "Link Mẫu Ảnh",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Style",
+              "displayName": "Style",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Ghép Nhạc",
+              "displayName": "Ghép Nhạc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Logo",
+              "displayName": "Logo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Chế Độ",
+              "displayName": "Chế Độ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Trạng Thái",
+              "displayName": "Trạng Thái",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "ID Sản Phẩm",
+              "displayName": "ID Sản Phẩm",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Link Thư Mục",
+              "displayName": "Link Thư Mục",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Link Video",
+              "displayName": "Link Video",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Check",
+              "displayName": "Check",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Trạng Thái upload",
+              "displayName": "Trạng Thái upload",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Time",
+              "displayName": "Time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Phân Tích SP",
+              "displayName": "Phân Tích SP",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Caption",
+              "displayName": "Caption",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Tên Sản Phẩm",
+              "displayName": "Tên Sản Phẩm",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Tên Hiển Thị Sản Phẩm",
+              "displayName": "Tên Hiển Thị Sản Phẩm",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Note",
+              "displayName": "Note",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "tạo caption",
+              "displayName": "tạo caption",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Trạng Thái upload Face",
+              "displayName": "Trạng Thái upload Face",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "ID trang",
+              "displayName": "ID trang",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Access Token",
+              "displayName": "Access Token",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Proxy",
+              "displayName": "Proxy",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Link Shoppe",
+              "displayName": "Link Shoppe",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "CMT Shoppe",
+              "displayName": "CMT Shoppe",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Link bài đăng",
+              "displayName": "Link bài đăng",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        3424,
+        -576
+      ],
+      "id": "93931599-4023-4ddd-88ca-ca25afb125b0",
+      "name": "UPDATE",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "0hq9s1sdokm5UYHK",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "postSettings": {
+          "text": "={{ $('Thiết Lập').item.json['Caption Sản Phẩm'] }}",
+          "visibilityType": 0,
+          "allowComment": 1,
+          "scheduleTime": 0,
+          "anchors": {
+            "anchor": [
+              {
+                "type": "product",
+                "productId": "={{ $('Thiết Lập').item.json['ID Sản Phẩm'] }}",
+                "displayName": "={{ $('Thiết Lập').item.json['Tên Sản Phẩm'] }}"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-social-tiktok.tikTokUpload",
+      "typeVersion": 1,
+      "position": [
+        3200,
+        -576
+      ],
+      "id": "200f8876-f7fe-4d85-8b59-87610700a2af",
+      "name": "TikTok Upload",
+      "credentials": {
+        "tiktokApi": {
+          "id": "jOYLxwXfu9mVBVrB",
+          "name": "TikTok Credential account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "5683477257",
+        "text": "=🟢 TIKTOKsongkhoecungthaomoc: Đăng thành công bài {{ $('Thiết Lập').item.json.STT }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3648,
+        -576
+      ],
+      "id": "9f4540fc-3ad7-4790-8be1-f45a159cbd73",
+      "name": "Tele ",
+      "webhookId": "7642b5fb-e07c-4b94-b01d-9d9f9caed0a7",
+      "alwaysOutputData": true,
+      "credentials": {
+        "telegramApi": {
+          "id": "eph4ygy7aJfqx3uN",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": "={{ $json.waitSeconds }}"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2080,
+        -576
+      ],
+      "id": "36eb0b06-5a77-4efc-b163-9cc51de97b2d",
+      "name": "Wait1",
+      "webhookId": "3bac047d-cedd-4d33-87bf-d7783e406edc"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Ngẫu nhiên từ 5 phút (300 giây) đến 10 phút (600 giây)\nconst min = 1;\nconst max = 600;\nconst waitSeconds = Math.floor(Math.random() * (max - min + 1)) + min;\n\nreturn {\n  waitSeconds: waitSeconds,\n  delayMinutes: (waitSeconds / 60).toFixed(2) // Để bạn xem cho vui\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1856,
+        -576
+      ],
+      "id": "4f762007-c448-443c-8146-e608dde507dd",
+      "name": "Code in JavaScript"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Thiết Lập",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Thiết Lập": {
+      "main": [
+        [
+          {
+            "node": "Limit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limit": {
+      "main": [
+        [
+          {
+            "node": "Cookie & Captcha",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cookie & Captcha": {
+      "main": [
+        [
+          {
+            "node": "Binary1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Binary1": {
+      "main": [
+        [
+          {
+            "node": "TikTok Upload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "TikTok Upload": {
+      "main": [
+        [
+          {
+            "node": "UPDATE",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "UPDATE": {
+      "main": [
+        [
+          {
+            "node": "Tele ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait1": {
+      "main": [
+        [
+          {
+            "node": "Thiết Lập",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Wait1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "541868a5-388c-445a-9297-4a97b938c0d8",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "b9e5fc4ba6864eb405867cb21430f36f06b7b67f489d6b2992626f8fb42de6bd"
+  },
+  "id": "1Ohn531ih1FRiYQX",
+  "tags": [
+    {
+      "updatedAt": "2026-07-12T09:37:43.332Z",
+      "createdAt": "2026-07-12T09:37:43.332Z",
+      "id": "5IAxV12AkoSOfdrv",
+      "name": "tiktok"
+    }
+  ]
+}

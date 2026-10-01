@@ -1,0 +1,29 @@
+{
+  "name": "product-video-generator",
+  "version": "1.0.0",
+  "description": "Standalone Product Video Review Generator replacing n8n",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "ui": "node src/server.js",
+    "login": "node src/login.js",
+    "vids": "node src/vids.js"
+  },
+  "dependencies": {
+    "@aws-crypto/crc32": "^5.2.0",
+    "@google/genai": "^0.2.0",
+    "@mongodb-js/zstd": "^7.0.0",
+    "axios": "^1.7.9",
+    "cors": "^2.8.6",
+    "crc-32": "^1.2.2",
+    "dotenv": "^16.4.7",
+    "express": "^5.2.1",
+    "form-data": "^4.0.6",
+    "googleapis": "^144.0.0",
+    "jsdom": "^29.1.1",
+    "node-fetch": "^2.7.0",
+    "puppeteer-core": "^25.12.0",
+    "sharp": "^0.33.5"
+  }
+}
