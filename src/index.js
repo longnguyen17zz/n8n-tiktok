@@ -405,7 +405,65 @@ export async function processRow(row, logger = (level, msg) => console.log(`[${l
 }
 
 /**
- * Quét và chạy hàng đợi
+ * CHẾ ĐỘ 1: Chỉ chạy đăng TikTok cho các video đã sẵn sàng ("Chờ Đăng")
+ */
+export async function runTikTokWorker(logger = (level, msg) => console.log(`[${level}] ${msg}`)) {
+  logger('info', '📱 [TikTok Worker] Bắt đầu quét các video "Chờ Đăng" trên Google Sheet...');
+
+  if (!CONFIG.GOOGLE_SERVICE_ACCOUNT_JSON) {
+    logger('warning', 'Chưa có cấu hình Google Service Account, không thể quét Sheet.');
+    return null;
+  }
+
+  if (!isTikTokConfigured()) {
+    logger('error', '❌ Chưa cấu hình TIKTOK_SESSION_JSON hợp lệ.');
+    return null;
+  }
+
+  const tiktokQueue = await Google.fetchTikTokQueueRows(50);
+  const pendingList = tiktokQueue
+    .filter(r => (r['Trạng Thái upload'] || '').trim() === 'Chờ Đăng' && (r['Link Video'] || '').trim())
+    .sort((a, b) => (a.rowNumber || 0) - (b.rowNumber || 0)); // Đăng theo thứ tự từ trên xuống dưới
+
+  if (pendingList.length === 0) {
+    logger('info', 'ℹ️ Không có video nào đang ở trạng thái "Chờ Đăng" có Link Video hợp lệ.');
+    return null;
+  }
+
+  const targetRow = pendingList[0];
+  logger('info', `🎯 Tìm thấy ${pendingList.length} video chờ đăng. Tiến hành đăng hàng #${targetRow.rowNumber} ("${targetRow['Tên Sản Phẩm']}")`);
+  return await triggerTikTokUpload(targetRow, logger);
+}
+
+/**
+ * CHẾ ĐỘ 2: Chỉ chạy tạo video (Lưu vào Google Drive, gán trạng thái "Chờ Đăng", KHÔNG đăng TikTok)
+ */
+export async function runGenerateWorker(logger = (level, msg) => console.log(`[${level}] ${msg}`)) {
+  logger('info', '🎬 [Video Generator] Bắt đầu quét hàng đợi "Chờ Tạo" từ Google Sheets...');
+
+  if (!CONFIG.GOOGLE_SERVICE_ACCOUNT_JSON) {
+    logger('warning', 'Chưa có cấu hình Google Service Account, không thể quét Sheet.');
+    return null;
+  }
+
+  const row = await Google.fetchQueueRow();
+  if (!row) {
+    logger('info', 'ℹ️ Không có hàng nào ở trạng thái "Chờ Tạo".');
+    return null;
+  }
+
+  // Tạm tắt auto publish TikTok trong quá trình tạo video để đảm bảo chỉ tạo và lưu Drive
+  const origAutoPublish = CONFIG.TIKTOK_AUTO_PUBLISH;
+  CONFIG.TIKTOK_AUTO_PUBLISH = false;
+  try {
+    return await processRow(row, logger);
+  } finally {
+    CONFIG.TIKTOK_AUTO_PUBLISH = origAutoPublish;
+  }
+}
+
+/**
+ * Quét và chạy hàng đợi tổng hợp
  */
 export async function runWorker(logger = (level, msg) => console.log(`[${level}] ${msg}`)) {
   logger('info', '🚀 Bắt đầu quét hàng đợi từ Google Sheets...');
@@ -416,17 +474,9 @@ export async function runWorker(logger = (level, msg) => console.log(`[${level}]
   }
 
   // 1. Quét xem có video nào đang ở trạng thái "Chờ Đăng" TikTok không
-  if (isTikTokConfigured()) {
-    try {
-      const tiktokQueue = await Google.fetchTikTokQueueRows(10);
-      const pendingUpload = tiktokQueue.find(r => (r['Trạng Thái upload'] || '').trim() === 'Chờ Đăng');
-      if (pendingUpload) {
-        logger('info', `📱 Phát hiện hàng #${pendingUpload.rowNumber} ("${pendingUpload['Tên Sản Phẩm']}") đang Chờ Đăng TikTok. Đang tiến hành đăng...`);
-        return await triggerTikTokUpload(pendingUpload, logger);
-      }
-    } catch (e) {
-      logger('warning', `Kiểm tra hàng đợi TikTok thất bại: ${e.message}`);
-    }
+  if (CONFIG.TIKTOK_AUTO_PUBLISH && isTikTokConfigured()) {
+    const posted = await runTikTokWorker(logger);
+    if (posted) return posted;
   }
 
   // 2. Quét hàng đợi tạo video mới
@@ -443,5 +493,13 @@ export async function runWorker(logger = (level, msg) => console.log(`[${level}]
 const __filename = fileURLToPath(import.meta.url);
 const isDirectRun = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(__filename);
 if (isDirectRun) {
-  runWorker().catch(console.error);
+  const arg = process.argv[2] || '';
+  if (arg === '--post-tiktok' || arg === 'post') {
+    runTikTokWorker().catch(console.error);
+  } else if (arg === '--generate' || arg === 'generate') {
+    runGenerateWorker().catch(console.error);
+  } else {
+    runWorker().catch(console.error);
+  }
 }
+

@@ -1,0 +1,39 @@
+name: 1. Tạo Video Hàng Loạt (Lưu Drive - Chờ Đăng)
+
+on:
+  workflow_dispatch: # Bấm nút "Run workflow" để quét tạo video lưu vào Google Drive
+
+jobs:
+  generate-videos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+
+      - name: Install Dependencies
+        run: npm install --omit=dev
+
+      - name: Generate Video to Drive
+        env:
+          SHEET_DOCUMENT_ID: ${{ secrets.SHEET_DOCUMENT_ID }}
+          DRIVE_OUTPUT_FOLDER_ID: ${{ secrets.DRIVE_OUTPUT_FOLDER_ID }}
+          FLOW_PROJECT_ID: ${{ secrets.FLOW_PROJECT_ID }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          ENGINE: ${{ secrets.ENGINE || 'vids' }}
+        run: node src/index.js --generate
