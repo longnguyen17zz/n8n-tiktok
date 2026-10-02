@@ -3,13 +3,21 @@ import { CONFIG } from './config.js';
 
 const ai = new GoogleGenAI({ apiKey: CONFIG.GEMINI_API_KEY });
 const CANDIDATE_MODELS = ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.5-flash'];
-const MODEL = CANDIDATE_MODELS[0];
+
+const withTimeout = (promise, ms, label) => Promise.race([
+  promise,
+  new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} quá ${ms}ms, có thể model đang quá tải`)), ms))
+]);
 
 export async function generateContentWithFallback(contents, options = {}) {
   let lastErr = null;
   for (const m of CANDIDATE_MODELS) {
     try {
-      const res = await ai.models.generateContent({ model: m, contents, ...options });
+      const res = await withTimeout(
+        ai.models.generateContent({ model: m, contents, ...options }),
+        45000,
+        `Gọi Gemini model "${m}"`
+      );
       if (res && res.text) return res;
     } catch (err) {
       lastErr = err;
@@ -30,25 +38,21 @@ export async function analyzeProduct(imageBuffer, productName) {
 
 export async function analyzeModel(imageBuffer) {
   const prompt = `Phân tích chi tiết người mẫu trong bức ảnh này để làm prompt tạo video. Trả về đúng 1 đoạn văn bằng TIẾNG VIỆT mô tả sắc thái khuôn mặt, làn da, đôi mắt, sống mũi, khóe môi, kiểu tóc và trang phục. Chỉ trả về văn bản thuần túy bằng tiếng Việt.`;
-  const res = await ai.models.generateContent({
-    model: MODEL,
-    contents: [
-      { text: prompt },
-      { inlineData: { mimeType: 'image/jpeg', data: imageBuffer.toString('base64') } }
-    ]
-  });
+  const contents = [
+    { text: prompt },
+    { inlineData: { mimeType: 'image/jpeg', data: imageBuffer.toString('base64') } }
+  ];
+  const res = await generateContentWithFallback(contents);
   return res.text.trim();
 }
 
 export async function analyzeBackground(imageBuffer) {
   const prompt = `Phân tích không gian bối cảnh, phòng ốc, ánh sáng, tường và đồ nội thất trong bức ảnh này. Hoàn toàn bỏ qua con người. Trả về đúng 1 đoạn văn bằng TIẾNG VIỆT tự nhiên mô tả không gian sang trọng, ánh sáng ấm áp.`;
-  const res = await ai.models.generateContent({
-    model: MODEL,
-    contents: [
-      { text: prompt },
-      { inlineData: { mimeType: 'image/jpeg', data: imageBuffer.toString('base64') } }
-    ]
-  });
+  const contents = [
+    { text: prompt },
+    { inlineData: { mimeType: 'image/jpeg', data: imageBuffer.toString('base64') } }
+  ];
+  const res = await generateContentWithFallback(contents);
   return res.text.trim();
 }
 
@@ -60,7 +64,7 @@ Background: ${bgAnalysis}
 Scenario: ${contentVideo}
 Do not use markdown blocks, return only raw JSON array like ["prompt 1", "prompt 2"].`;
   
-  const res = await ai.models.generateContent({ model: MODEL, contents: prompt });
+  const res = await generateContentWithFallback(prompt);
   const raw = res.text.replace(/```json|```/g, '').trim();
   return JSON.parse(raw);
 }
@@ -68,8 +72,8 @@ Do not use markdown blocks, return only raw JSON array like ["prompt 1", "prompt
 export async function generateVideoPrompts(numVideos, productName, contentVideo, imagePrompt) {
   const prompt = `Generate exactly ${numVideos} short Veo 3 video prompt single-line strings in a JSON schema: {"prompts": ["string1", "string2"]}.
 Scenario: ${contentVideo}. Product: ${productName}. Initial Frame: ${imagePrompt}. Spoken language: Vietnamese (25-28 words). Final clip ends with: "xem ngay tại giỏ hàng bên góc trái bên dưới ạ". Output only raw JSON.`;
-  
-  const res = await ai.models.generateContent({ model: MODEL, contents: prompt });
+
+  const res = await generateContentWithFallback(prompt);
   const raw = res.text.replace(/```json|```/g, '').trim();
   const parsed = JSON.parse(raw);
   return parsed.prompts || parsed;
