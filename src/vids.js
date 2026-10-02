@@ -175,88 +175,150 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
         });
         await sleep(600);
 
-        try {
-          let uploaded = false;
-          const isAvatarSlot = slot.type === 'avatar';
+        let uploaded = false;
+        const isAvatarSlot = slot.type === 'avatar';
 
-          // 1. Thử click trực tiếp vào nút slot trên panel ban đầu ("Hình đại diện" hoặc "Thành phần")
+        // 1. Thử click trực tiếp vào nút slot hiển thị trên khung tạo (nếu có ô trống "Hình đại diện" hoặc "Thành phần")
+        try {
           const slotBtnHandle = await page.evaluateHandle((isAvatar) => {
-            const all = Array.from(document.querySelectorAll('button, div[role="button"], span, div'));
-            const btn = all.find(e => {
+            const isVisible = (el) => {
+              if (!el) return false;
+              const style = window.getComputedStyle(el);
+              if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+              const rect = el.getBoundingClientRect();
+              return rect.width > 0 && rect.height > 0;
+            };
+
+            const scope = document.querySelector('.videoGenCreationView, [role="dialog"], .collapsiblePromptBox') || document.body;
+            const candidates = Array.from(scope.querySelectorAll('button, div[role="button"], [tabindex="0"]')).filter(isVisible);
+
+            const btn = candidates.find(e => {
               const txt = (e.innerText || '').trim().toLowerCase();
               const aria = (e.getAttribute('aria-label') || '').trim().toLowerCase();
               if (isAvatar) {
-                return txt === 'hình đại diện' || txt.includes('đại diện') || aria.includes('hình đại diện') || txt === 'avatar';
+                return (txt.includes('hình đại diện') || aria.includes('hình đại diện') || txt === 'avatar') && !txt.includes('chọn');
               } else {
-                return txt === 'thành phần' || txt.includes('thành phần') || aria.includes('thành phần');
+                return txt.includes('thành phần') || aria.includes('thành phần');
               }
             });
-            return btn ? (btn.closest('button, div[role="button"]') || btn) : null;
+            return btn || null;
           }, isAvatarSlot);
 
           const slotBtn = slotBtnHandle.asElement();
           if (slotBtn) {
-            const box = await slotBtn.boundingBox();
-            const fcPromise = page.waitForFileChooser({ timeout: 8000 }).catch(() => null);
-            if (box && box.width > 0 && box.height > 0) {
-              await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-            } else {
-              await slotBtn.click();
-            }
+            const fcPromise = page.waitForFileChooser({ timeout: 4000 }).catch(() => null);
+            await page.evaluate(el => {
+              if (el) {
+                el.scrollIntoView({ behavior: 'instant', block: 'center' });
+                el.click();
+              }
+            }, slotBtn);
+
             const fc = await fcPromise;
             if (fc) {
               await fc.accept([slot.path]);
-              log('info', `✅ Đã nạp thành công [${slot.name}] vào đúng slot!`);
-              await sleep(3500);
+              log('info', `✅ Đã nạp thành công [${slot.name}] vào đúng ô trên giao diện!`);
+              await sleep(3000);
               uploaded = true;
             }
           }
+        } catch (e1) {
+          // Bỏ qua và chuyển sang bước 2
+        }
 
-          // 2. Nếu slot ban đầu đã có ảnh hoặc menu chưa mở, bấm nút "+ Thêm" (Thêm hình đại diện hoặc thành phần)
-          if (!uploaded) {
+        // 2. Nếu chưa nạp được, bấm nút "+ Thêm" (Thêm hình đại diện hoặc thành phần)
+        if (!uploaded) {
+          try {
             const addBtnHandle = await page.evaluateHandle(() => {
-              const btn = document.querySelector('button[aria-label="Thêm hình đại diện hoặc thành phần"], .videoGenCreationViewFileInputsInputSelectButton');
-              if (btn) return btn;
-              const all = Array.from(document.querySelectorAll('button, div[role="button"]'));
-              return all.find(e => (e.getAttribute('aria-label') || '').includes('Thêm') || (e.innerText || '').includes('Thêm')) || null;
+              const isVisible = (el) => {
+                if (!el) return false;
+                const style = window.getComputedStyle(el);
+                if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+                const rect = el.getBoundingClientRect();
+                return rect.width > 0 && rect.height > 0;
+              };
+
+              const exactBtn = document.querySelector('button[aria-label="Thêm hình đại diện hoặc thành phần"], .videoGenCreationViewFileInputsInputSelectButton');
+              if (exactBtn && isVisible(exactBtn)) return exactBtn;
+
+              const scope = document.querySelector('.videoGenCreationView, [role="dialog"], .collapsiblePromptBox') || document.body;
+              const buttons = Array.from(scope.querySelectorAll('button, div[role="button"]')).filter(isVisible);
+              return buttons.find(e => {
+                const aria = (e.getAttribute('aria-label') || '').toLowerCase();
+                const txt = (e.innerText || '').toLowerCase();
+                return aria.includes('thêm') || txt.includes('thêm') || aria.includes('add') || txt.includes('add');
+              }) || null;
             });
+
             const addBtn = addBtnHandle.asElement();
             if (addBtn) {
-              const addBox = await addBtn.boundingBox();
-              if (addBox && addBox.width > 0 && addBox.height > 0) {
-                await page.mouse.click(addBox.x + addBox.width / 2, addBox.y + addBox.height / 2);
-              } else {
-                await page.evaluate(el => el && el.click(), addBtn);
-              }
-              await sleep(1500);
+              await page.evaluate(el => {
+                if (el) {
+                  el.scrollIntoView({ behavior: 'instant', block: 'center' });
+                  el.click();
+                }
+              }, addBtn);
+              await sleep(1200);
 
               // Menu popup xổ ra: chọn "Hình đại diện" hoặc "Thành phần" tương ứng
               const menuItemHandle = await page.evaluateHandle((isAvatar) => {
-                const all = Array.from(document.querySelectorAll('button, div[role="button"], span, div, [role="menuitem"]'));
-                let target = all.find(e => {
+                const isVisible = (el) => {
+                  if (!el) return false;
+                  const style = window.getComputedStyle(el);
+                  if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+                  const rect = el.getBoundingClientRect();
+                  return rect.width > 0 && rect.height > 0;
+                };
+
+                const allItems = Array.from(document.querySelectorAll('[role="menuitem"], [role="option"], button, div[role="button"], span, div')).filter(isVisible);
+                let target = allItems.find(e => {
                   const txt = (e.innerText || '').trim().toLowerCase();
-                  if (isAvatar) return txt.includes('hình đại diện') || txt.includes('avatar');
-                  return txt.includes('thành phần') || txt.includes('element');
+                  const aria = (e.getAttribute('aria-label') || '').trim().toLowerCase();
+                  if (isAvatar) {
+                    return (txt.includes('hình đại diện') || aria.includes('hình đại diện') || txt.includes('avatar')) && !txt.includes('thêm');
+                  }
+                  return (txt.includes('thành phần') || aria.includes('thành phần') || txt.includes('element')) && !txt.includes('thêm');
                 });
+
                 if (!target) {
-                  target = all.find(e => {
+                  target = allItems.find(e => {
                     const txt = (e.innerText || '').trim().toLowerCase();
                     return txt.includes('tải lên') || txt.includes('upload') || txt.includes('tệp') || txt.includes('máy tính');
                   });
                 }
-                return target ? (target.closest('button, div[role="button"], [role="menuitem"]') || target) : null;
+                return target ? (target.closest('[role="menuitem"], [role="option"], button, div[role="button"]') || target) : null;
               }, isAvatarSlot);
 
               const menuItem = menuItemHandle.asElement();
               if (menuItem) {
-                const mBox = await menuItem.boundingBox();
-                const fcPromise = page.waitForFileChooser({ timeout: 8000 }).catch(() => null);
-                if (mBox && mBox.width > 0 && mBox.height > 0) {
-                  await page.mouse.click(mBox.x + mBox.width / 2, mBox.y + mBox.height / 2);
-                } else {
-                  await page.evaluate(el => el && el.click(), menuItem);
+                const fcPromise = page.waitForFileChooser({ timeout: 5000 }).catch(() => null);
+                await page.evaluate(el => {
+                  if (el) {
+                    el.scrollIntoView({ behavior: 'instant', block: 'center' });
+                    el.click();
+                  }
+                }, menuItem);
+
+                let fc = await fcPromise;
+
+                // Nếu click vào mục menu lại mở tiếp 1 menu con có chữ "Tải lên" / "Từ máy tính"
+                if (!fc) {
+                  await sleep(800);
+                  const subItemHandle = await page.evaluateHandle(() => {
+                    const all = Array.from(document.querySelectorAll('[role="menuitem"], button, div[role="button"]'));
+                    return all.find(e => {
+                      const txt = (e.innerText || '').trim().toLowerCase();
+                      return txt.includes('tải lên') || txt.includes('máy tính') || txt.includes('upload');
+                    }) || null;
+                  });
+                  const subItem = subItemHandle.asElement();
+                  if (subItem) {
+                    const subFcPromise = page.waitForFileChooser({ timeout: 5000 }).catch(() => null);
+                    await page.evaluate(el => el && el.click(), subItem);
+                    fc = await subFcPromise;
+                  }
                 }
-                const fc = await fcPromise;
+
                 if (fc) {
                   await fc.accept([slot.path]);
                   log('info', `✅ Đã nạp thành công [${slot.name}] qua menu Thêm!`);
@@ -265,20 +327,26 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
                 }
               }
             }
+          } catch (e2) {
+            // Bỏ qua và chuyển sang fallback input[type="file"]
           }
+        }
 
-          // 3. Fallback: nạp qua input[type="file"]
-          if (!uploaded) {
+        // 3. Fallback: nạp qua input[type="file"]
+        if (!uploaded) {
+          try {
             const fileInputs = await page.$$('input[type="file"]');
             if (fileInputs.length > 0) {
               await fileInputs[fileInputs.length - 1].uploadFile(slot.path);
               log('info', `✅ Đã nạp [${slot.name}] qua input file fallback.`);
               await sleep(3500);
               uploaded = true;
+            } else {
+              log('warning', `⚠️ Không tìm thấy ô tải tệp cho [${slot.name}]`);
             }
+          } catch (e3) {
+            log('warning', `⚠️ Cảnh báo tải [${slot.name}]: ${e3.message}`);
           }
-        } catch (err) {
-          log('warning', `⚠️ Cảnh báo tải [${slot.name}]: ${err.message}`);
         }
       }
 
