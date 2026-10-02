@@ -189,16 +189,29 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
       await sleep(2500);
 
       // 2.3. ĐÓNG HOÀN TOÀN modal chào mừng ("Xin chào ... Hãy bắt đầu sáng tạo") nếu còn che màn hình
+      // CHÚ Ý: phải kiểm tra welcome thực sự ĐANG HIỂN THỊ và khung cha tìm được KHÔNG PHẢI là
+      // panel "Đoạn video do AI tạo" vừa mở — nếu không, việc leo cha theo kích thước có thể vô tình
+      // trúng ngay panel AI (cũng rộng/cao tương tự) và ẩn mất nó, phá hỏng toàn bộ luồng sau đó.
       await page.evaluate(() => {
+        const isVisible = (el) => {
+          if (!el) return false;
+          const style = window.getComputedStyle(el);
+          if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+          const r = el.getBoundingClientRect();
+          return r.width > 0 && r.height > 0;
+        };
         const all = Array.from(document.querySelectorAll('*'));
         const welcome = all.find(e => {
           const t = (e.innerText || '').trim();
-          return t.includes('Hãy bắt đầu sáng tạo') || t.includes('Xin chào');
+          return (t.includes('Hãy bắt đầu sáng tạo') || t.includes('Xin chào')) && isVisible(e);
         });
         if (welcome) {
           let modal = welcome;
           while (modal && modal !== document.body) {
             const r = modal.getBoundingClientRect();
+            const mt = (modal.innerText || '');
+            // Tuyệt đối không ẩn panel AI thật (chứa "Mô tả video của bạn" / "Đoạn video do AI tạo")
+            if (mt.includes('Mô tả video của bạn') || mt.includes('Đoạn video do AI tạo')) { modal = null; break; }
             if (r.width > 350 && r.height > 250) break;
             modal = modal.parentElement;
           }
@@ -300,19 +313,12 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
       } catch (eBatch) {}
 
       // 2. Nạp từng file còn lại qua nút "+ Thêm" trên giao diện (hỗ trợ cả iframe Google Picker)
-      for (let i = 0; i < slots.length; i++) {
+      // CHỈ chạy khi batch upload ở bước 1 thất bại — nếu đã thành công thì KHÔNG thử lại nữa,
+      // vì nút "+ Thêm" dùng để thêm ảnh tham chiếu MỚI (không phải nạp lại ảnh đã có), và việc
+      // dò DOM xem "đã nạp hay chưa" không đáng tin cậy (UI dùng web component, không phải <div> thường)
+      // nên từng khiến code bấm nhầm +Thêm, mở picker thừa và phá vỡ toàn bộ luồng sau đó.
+      for (let i = 0; i < slots.length && !allBatchUploaded; i++) {
         const slot = slots[i];
-
-        // Kiểm tra xem slot thứ (i + 1) đã có ảnh nạp chưa
-        const isAlreadyUploaded = await page.evaluate((idx) => {
-          const chips = Array.from(document.querySelectorAll('[role="listitem"], .videoGenCreationViewFileInputsChip, div'));
-          return chips.some(c => (c.innerText || '').includes(`Hình ảnh${idx + 1}`) || (c.innerText || '').includes(`Ảnh ${idx + 1}`));
-        }, i);
-
-        if (allBatchUploaded && isAlreadyUploaded) {
-          log('info', `✅ Ảnh [${slot.name}] đã có sẵn trong khung tạo!`);
-          continue;
-        }
 
         log('info', `📸 Đang tải [${slot.name}]: ${path.basename(slot.path)}...`);
         let uploaded = false;
@@ -373,12 +379,13 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
           }
         } catch (eAdd) {}
 
-        // Đóng modal Mở tệp nếu còn mở
+        // Đóng modal Mở tệp nếu còn mở (CHỈ bấm nút đóng của chính hộp thoại Mở tệp bằng
+        // khớp chính xác aria-label, KHÔNG dùng phím Escape ở đây vì có thể vô tình đóng
+        // luôn panel "Đoạn video do AI tạo" đang mở phía sau)
         await page.evaluate(() => {
           const closeBtns = Array.from(document.querySelectorAll('button[aria-label="Đóng"], button[aria-label="Close"], .picker-dialog-close'));
           closeBtns.forEach(b => { try { b.click(); } catch (e) {} });
         });
-        await page.keyboard.press('Escape');
         await sleep(800);
 
         if (!uploaded && i > 0) {
@@ -386,17 +393,16 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
         }
       }
 
-      // ĐẢM BẢO ĐÓNG HOÀN TOÀN MỌI MODAL / HỘP THOẠI TRƯỚC KHI NHẬP PROMPT
+      // ĐẢM BẢO ĐÓNG HOÀN TOÀN MỌI MODAL / HỘP THOẠI TRƯỚC KHI NHẬP PROMPT (không dùng Escape,
+      // lý do tương tự: panel AI đang mở có thể bị đóng nhầm bởi phím Escape)
       await page.evaluate(() => {
         const closeBtns = Array.from(document.querySelectorAll('button[aria-label="Đóng"], button[aria-label="Close"], .picker-dialog-close, [aria-label="Huỷ"]'));
         closeBtns.forEach(b => { try { b.click(); } catch (e) {} });
       });
-      await page.keyboard.press('Escape');
       await sleep(1000);
     }
 
-    // 5. Đảm bảo đóng mọi dialog che màn hình, tìm ô nhập prompt kịch bản và gõ nội dung
-    await page.keyboard.press('Escape');
+    // 5. Tìm ô nhập prompt kịch bản và gõ nội dung
     await sleep(500);
 
     log('info', `📝 Đang nhập kịch bản: "${prompt.substring(0, 60)}..."`);
@@ -427,17 +433,16 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
           m = m.parentElement;
         }
       }
-      // Bấm các nút đóng nếu có
-      const closeBtns = Array.from(document.querySelectorAll('button[aria-label*="Đóng" i], button[aria-label*="Close" i], [aria-label*="Đóng" i], [aria-label*="Close" i], .picker-dialog-close'));
-      closeBtns.forEach(b => { try { b.click(); } catch (e) {} });
+      // CHÚ Ý: KHÔNG bấm nút đóng theo aria-label chứa "Đóng"/"Close" ở đây — panel
+      // "Đoạn video do AI tạo" đang mở cũng có nút đóng với aria-label "Đóng trang bên",
+      // selector rộng từng vô tình bấm trúng nút đó và tự đóng mất panel AI ngay trước khi submit.
 
-      // Xoá tất cả scrim / backdrop
+      // Xoá tất cả scrim / backdrop (an toàn, không ảnh hưởng tới panel AI)
       const scrims = Array.from(document.querySelectorAll('.modal-dialog-bg, .picker-dialog-bg, [class*="scrim"], [class*="backdrop"], [class*="overlay"]'));
       scrims.forEach(s => {
         if (s.getBoundingClientRect().width > window.innerWidth * 0.7) s.style.display = 'none';
       });
     });
-    await page.keyboard.press('Escape');
     await sleep(600);
 
     // Tìm chính xác nút tròn màu xanh ở góc dưới cùng bên phải của panel prompt (tránh tuyệt đối thanh rail bên phải và tab Tạo ở trên)
@@ -584,9 +589,23 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
       let status = null;
       try {
         status = await page.evaluate(() => {
-          const text = document.body.innerText || '';
-          const match = text.match(/(\d+)%/);
-          const percent = match ? match[0] : null;
+          // Tìm chỉ số % tiến độ tạo video AI thật, loại trừ tuyệt đối chỉ số % của thanh Zoom
+          // (luôn nằm trong appsFlixZoomSliderInput... / docs-material-slider-tooltip ở góc dưới timeline)
+          const isZoomControl = (el) => {
+            let node = el;
+            for (let depth = 0; depth < 6 && node; depth++) {
+              const cls = (node.className || '').toString();
+              if (cls.includes('ZoomSlider') || cls.includes('docs-material-slider')) return true;
+              node = node.parentElement;
+            }
+            return false;
+          };
+          const percentLeafEls = Array.from(document.querySelectorAll('*')).filter(el => {
+            if (el.children.length > 0) return false; // chỉ xét node lá để tránh trùng lặp từ phần tử cha
+            return /^\d{1,3}%$/.test((el.innerText || el.textContent || '').trim());
+          });
+          const percentEl = percentLeafEls.find(el => !isZoomControl(el));
+          const percent = percentEl ? (percentEl.innerText || percentEl.textContent).trim() : null;
 
           // Chỉ kiểm tra các thông báo lỗi ĐANG THỰC SỰ HIỂN THỊ TRÊN MÀN HÌNH (loại trừ các thẻ ẩn display: none)
           const isVisible = (el) => {
@@ -689,8 +708,8 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
         throw new Error(status.errorMsg || 'Google Vids thông báo lỗi tạo video hoặc vi phạm chính sách nội dung.');
       }
 
-      // Theo dõi số chu kỳ đạt 100%
-      if (status.percent === '100%') {
+      // Theo dõi số chu kỳ đạt 100% (chỉ tin sau tối thiểu 12s để tránh mọi nhiễu % thoáng qua trên giao diện)
+      if (status.percent === '100%' && i >= 2) {
         reach100Cycles++;
         if (reach100Cycles === 1) {
           try {
@@ -819,6 +838,11 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
     log('info', '💾 Đang tải video MP4 về máy tính...');
     let downloadedFile = null;
 
+    const withTimeout = (promise, ms, label) => Promise.race([
+      promise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} quá ${ms}ms`)), ms))
+    ]);
+
     // Cách 0: Nếu là URL mạng HTTP/HTTPS (từ Google Video CDN), tải trực tiếp bằng Axios
     if (videoSrc && videoSrc.startsWith('http')) {
       try {
@@ -842,7 +866,41 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
           log('warning', `⚠️ Video từ CDN có dung lượng quá nhỏ (${resp.data?.byteLength || 0} bytes), bỏ qua để trích xuất blob thực...`);
         }
       } catch (httpErr) {
-        log('warning', `Tải video từ CDN thất bại: ${httpErr.message}, tiếp tục thử trích xuất blob...`);
+        log('warning', `Tải video từ CDN thất bại: ${httpErr.message}, thử tải qua fetch() ngay trong trang...`);
+      }
+    }
+
+    // Cách 0.5: Axios từ bên ngoài thường thiếu các header xác thực nội bộ mà Google gắn vào
+    // mọi request xuất phát từ chính trang (ví dụ token phiên, header tuỳ biến của ứng dụng).
+    // fetch() chạy ngay trong ngữ cảnh trang mang đầy đủ các header đó nên nhiều khả năng vượt qua lỗi 403.
+    if (!downloadedFile && videoSrc && videoSrc.startsWith('http')) {
+      try {
+        log('info', '📥 Đang tải video qua fetch() ngay trong trình duyệt...');
+        const base64Data = await withTimeout(page.evaluate(async (url) => {
+          const resp = await fetch(url, { credentials: 'include' });
+          if (!resp.ok) throw new Error('HTTP ' + resp.status);
+          const blob = await resp.blob();
+          return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.onerror = () => reject(new Error('FileReader lỗi'));
+            reader.readAsDataURL(blob);
+          });
+        }, videoSrc), 30000, 'fetch() video trong trang');
+
+        if (base64Data && base64Data.includes(',')) {
+          const buffer = Buffer.from(base64Data.split(',')[1], 'base64');
+          if (buffer.length > 300000) {
+            const filename = `vids_${Date.now()}.mp4`;
+            downloadedFile = path.join(outputDir, filename);
+            fs.writeFileSync(downloadedFile, buffer);
+            log('info', `🎉 Đã lưu video thành công qua fetch() trong trang: ${downloadedFile} (${(buffer.length / 1024 / 1024).toFixed(2)} MB)`);
+          } else {
+            log('warning', `⚠️ Video tải qua fetch() có dung lượng quá nhỏ (${buffer.length} bytes), bỏ qua...`);
+          }
+        }
+      } catch (fetchErr) {
+        log('warning', `Tải video qua fetch() trong trang thất bại: ${fetchErr.message}, tiếp tục thử cách khác...`);
       }
     }
 
@@ -877,18 +935,22 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
     }
 
     // Cách 2: Bấm nút Chèn (Insert) vào timeline, sau đó tải qua CDP
+    // Mỗi lệnh evaluate được bọc timeout riêng: nếu trang bận xử lý video vừa bắt được mà treo
+    // phản hồi CDP, ta vẫn tiếp tục sang bước chờ file tải về thay vì làm sập toàn bộ tiến trình.
     if (!downloadedFile) {
       try {
-        await page.evaluate(() => {
+        await withTimeout(page.evaluate(() => {
           const buttons = Array.from(document.querySelectorAll('button, div[role="button"]'));
           const chenBtn = buttons.find(b => {
             const t = (b.innerText || '').trim();
             return t === 'Chèn' || t === 'Insert' || t.includes('Chèn video');
           });
           if (chenBtn) chenBtn.click();
-        });
+        }), 15000, 'Bấm nút Chèn');
         await sleep(3000);
-      } catch (e) {}
+      } catch (e) {
+        log('warning', `⚠️ Bấm nút Chèn không phản hồi kịp (${e.message}), bỏ qua và tiếp tục tải trực tiếp...`);
+      }
 
       try {
         const bClient = await browser.target().createCDPSession();
@@ -899,14 +961,18 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
         });
       } catch (e) {}
 
-      await page.evaluate((url) => {
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `video_${Date.now()}.mp4`;
-        document.body.appendChild(a);
-        a.click();
-        setTimeout(() => a.remove(), 1000);
-      }, videoSrc);
+      try {
+        await withTimeout(page.evaluate((url) => {
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `video_${Date.now()}.mp4`;
+          document.body.appendChild(a);
+          a.click();
+          setTimeout(() => a.remove(), 1000);
+        }, videoSrc), 15000, 'Kích hoạt tải xuống qua thẻ <a>');
+      } catch (e) {
+        log('warning', `⚠️ Kích hoạt tải xuống không phản hồi kịp (${e.message}), vẫn chờ file xuất hiện trong thư mục tải về...`);
+      }
 
       for (let j = 0; j < 30; j++) {
         await sleep(2000);
