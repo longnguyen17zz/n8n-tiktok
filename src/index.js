@@ -250,7 +250,9 @@ export async function processRow(row, logger = (level, msg) => console.log(`[${l
 
     if (CONFIG.ENGINE === 'vids') {
       logger('info', '🎬 Đang kết nối Google Vids (0 Credit, gói Ultra)...');
-      const numVideos = parseInt(row['Số Video'] || '2', 10);
+      // Mỗi cảnh Google Vids thực tế chỉ sinh ra ~5s (dù cài đặt độ dài hiển thị 10s), nên mặc định
+      // 3 cảnh nối tiếp (~15s) để đạt độ dài video review tiêu chuẩn 12-20s thay vì 2 cảnh (~8-10s).
+      const numVideos = parseInt(row['Số Video'] || '3', 10);
       
       // Lưu file ảnh chuẩn bị cho Google Vids:
       // - MẪU ẢNH (imgMA) -> Nạp chuẩn xác vào ô "Hình đại diện" (Avatar) để AI nhận diện đúng mặt người mẫu
