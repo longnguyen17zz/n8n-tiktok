@@ -609,14 +609,29 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
           const toastEls = Array.from(document.querySelectorAll('.docs-toast, .jfk-butterBar, [role="alert"]')).filter(isVisible);
           const toastTexts = toastEls.map(el => (el.innerText || '').trim()).filter(Boolean);
 
-          const visibleError = toastTexts.find(t => 
+          const isErrorText = (t) =>
             !t.includes('tải lại trang') && (
               t.includes('chính sách') ||
               t.includes('không thể tạo') ||
               t.includes('sự cố khi tạo') ||
               t.includes('vi phạm')
-            )
-          );
+            );
+
+          let visibleError = toastTexts.find(isErrorText);
+
+          // Google Vids cũng hiển thị lỗi vi phạm nội dung dưới dạng THẺ LỚN ngay trong khung
+          // kết quả AI (icon cảnh báo + nút "Thử lại"/"Xoá"), KHÔNG phải toast nhỏ phía trên —
+          // nếu bỏ sót dạng này, code sẽ chờ vô ích suốt 8 phút rồi báo lỗi timeout chung chung
+          // thay vì báo đúng lý do thật.
+          if (!visibleError) {
+            const hasRetryDeleteButtons = Array.from(document.querySelectorAll('button, div[role="button"]'))
+              .filter(isVisible)
+              .some(b => (b.innerText || '').trim() === 'Thử lại' || (b.innerText || '').trim() === 'Xoá');
+            if (hasRetryDeleteButtons) {
+              const cardEl = Array.from(document.querySelectorAll('*')).find(e => isErrorText((e.innerText || '').trim()) && isVisible(e) && e.children.length <= 3);
+              if (cardEl) visibleError = (cardEl.innerText || '').trim();
+            }
+          }
 
           const hasError = !!visibleError;
           const errorMsg = visibleError || null;
