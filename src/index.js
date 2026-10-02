@@ -290,29 +290,24 @@ export async function processRow(row, logger = (level, msg) => console.log(`[${l
         vidsPrompts = await AI.generateVidsPrompts(numVideos, row['Tên Sản Phẩm'], row['Content Video'], null, null, null, hasRefImages, row['Kịch Bản']);
       }
 
-      const clipPaths = [];
-      for (let i = 0; i < vidsPrompts.length; i++) {
-        logger('info', `🎥 [Clip #${i + 1}/${vidsPrompts.length}] Đang nạp Mẫu ảnh (Avatar) & Sản phẩm (Thành phần) vào Google Vids...`);
-        logger('info', `📝 Prompt #${i + 1}: "${vidsPrompts[i].substring(0, 100)}..."`);
-        const clipDir = path.join(workDir, `clip_${i + 1}`);
-        const clipFile = await createVideoInGoogleVids({
-          prompt: vidsPrompts[i],
-          avatarPath: pMA,
-          productPath: pSP,
-          backgroundPath: pBG,
-          imagePaths: imageFiles,
-          outputDir: clipDir,
-          logger: (level, msg) => logger(level, msg)
-        });
-        clipPaths.push(clipFile);
-      }
+      logger('info', `🎥 Đang tạo ${vidsPrompts.length} cảnh nối tiếp liền mạch (cảnh 1 dùng ảnh Avatar/Thành phần, các cảnh sau dùng "Kéo dài" để giữ đúng nhân vật & sản phẩm)...`);
+      const clipDir = path.join(workDir, 'clip_final');
+      const clipFile = await createVideoInGoogleVids({
+        prompts: vidsPrompts,
+        avatarPath: pMA,
+        productPath: pSP,
+        backgroundPath: pBG,
+        imagePaths: imageFiles,
+        outputDir: clipDir,
+        logger: (level, msg) => logger(level, msg)
+      });
 
       const logoFile = await resolveLogoPath(row.Logo, logger);
       if (logoFile) {
         logger('info', `🏷️ Gắn logo thương hiệu kênh: ${path.basename(logoFile)} (góc dưới phải)...`);
       }
-      logger('info', `🎞️ FFmpeg đang ghép nối ${clipPaths.length} clip thành video hoàn chỉnh (~20s)...`);
-      await mergeVideosWithFfmpeg(clipPaths, logoFile, finalOutPath);
+      logger('info', `🎞️ FFmpeg đang xử lý tăng tốc video & gắn logo...`);
+      await mergeVideosWithFfmpeg([clipFile], logoFile, finalOutPath);
     } else {
       // Flow / Veo cũ
       logger('info', '🎬 Đang tạo video qua Veo Flow...');
