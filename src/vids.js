@@ -60,7 +60,7 @@ export async function getVidsBrowser(headless = false) {
  * @param {string} options.outputDir - Thư mục lưu video tải về
  * @returns {Promise<string>} Đường dẫn file video MP4 đã tải về
  */
-export async function createVideoInGoogleVids({ prompt, imagePaths = [], outputDir, logger = null }) {
+export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarPath = null, productPath = null, backgroundPath = null, outputDir, logger = null }) {
   fs.mkdirSync(outputDir, { recursive: true });
 
   const log = (level, msg) => {
@@ -128,13 +128,42 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], outputD
     });
     await sleep(2500);
 
-    // 4. Nếu có ảnh nguyên liệu (Mẫu ảnh, Sản phẩm, Background), import trực tiếp vào Google Vids
-    const validImages = (imagePaths || []).filter(img => img && fs.existsSync(img));
-    if (validImages.length > 0) {
-      log('info', `🖼️ Đang đính kèm ${validImages.length} ảnh tham chiếu vào Google Vids...`);
-      for (let i = 0; i < validImages.length; i++) {
-        const imgFile = path.resolve(validImages[i]);
-        log('info', `📸 Đang tải ảnh #${i + 1}: ${path.basename(imgFile)}...`);
+    // 4. Phân loại và nạp ảnh nguyên liệu theo đúng slot trong Google Vids:
+    // - MẪU ẢNH (avatar) -> Nạp vào "Hình đại diện" (Avatar) để AI dùng đúng mặt người mẫu làm nhân vật chính
+    // - SẢN PHẨM (product) -> Nạp vào "Thành phần" (Components) để người mẫu cầm đúng sản phẩm trên tay
+    // - BACKGROUND (background) -> Nạp bổ sung vào "Thành phần"
+    const slots = [];
+    if (avatarPath && fs.existsSync(avatarPath)) {
+      slots.push({ path: path.resolve(avatarPath), type: 'avatar', name: 'Mẫu ảnh (Hình đại diện)' });
+    }
+    if (productPath && fs.existsSync(productPath)) {
+      slots.push({ path: path.resolve(productPath), type: 'component', name: 'Sản phẩm (Thành phần)' });
+    }
+    if (backgroundPath && fs.existsSync(backgroundPath)) {
+      slots.push({ path: path.resolve(backgroundPath), type: 'component', name: 'Background (Thành phần)' });
+    }
+
+    // Fallback nếu người dùng truyền danh sách imagePaths truyền thống
+    if (slots.length === 0 && imagePaths && imagePaths.length > 0) {
+      const validImages = imagePaths.filter(img => img && fs.existsSync(img));
+      validImages.forEach((img, idx) => {
+        const isAvatar = path.basename(img).includes('mau_anh') || idx === 1;
+        slots.push({
+          path: path.resolve(img),
+          type: isAvatar ? 'avatar' : 'component',
+          name: isAvatar ? 'Mẫu ảnh (Hình đại diện)' : 'Sản phẩm (Thành phần)'
+        });
+      });
+      // Ưu tiên nạp avatar vào Hình đại diện trước
+      slots.sort((a, b) => (a.type === 'avatar' ? -1 : 1));
+    }
+
+    if (slots.length > 0) {
+      log('info', `🖼️ Đang nạp ${slots.length} ảnh nguyên liệu vào Google Vids: ${slots.map(s => s.name).join(' + ')}...`);
+
+      for (let i = 0; i < slots.length; i++) {
+        const slot = slots[i];
+        log('info', `📸 Đang tải [${slot.name}]: ${path.basename(slot.path)}...`);
 
         // Đảm bảo tab "Tạo" đang được chọn
         await page.evaluate(() => {
@@ -144,46 +173,47 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], outputD
             taoTab.click();
           }
         });
-        await sleep(500);
+        await sleep(600);
 
         try {
-          if (i === 0) {
-            // Ảnh #1: Bấm nút "Thành phần" để mở file chooser
-            const tpHandle = await page.evaluateHandle(() => {
-              const all = Array.from(document.querySelectorAll('button, div[role="button"], span, div'));
-              const tp = all.find(e => (e.innerText || '').trim() === 'Thành phần');
-              return tp ? (tp.closest('button, div[role="button"]') || tp) : null;
-            });
-            const tpEl = tpHandle.asElement();
-            if (tpEl) {
-              const box = await tpEl.boundingBox();
-              const fcPromise = page.waitForFileChooser({ timeout: 10000 });
-              if (box) await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-              else await tpEl.click();
-              const fc = await fcPromise;
+          let uploaded = false;
+          const isAvatarSlot = slot.type === 'avatar';
 
-              // Nếu Google Vids cho phép chọn nhiều file cùng lúc, truyền toàn bộ ảnh ngay lần đầu
-              if (fc.isMultiple() && validImages.length > 1) {
-                const allResolved = validImages.map(f => path.resolve(f));
-                await fc.accept(allResolved);
-                log('info', `✅ Đã gắn toàn bộ ${validImages.length} ảnh tham chiếu vào slot Thành phần cùng lúc!`);
-                await sleep(3500);
-                break; // Hoàn tất toàn bộ ảnh
+          // 1. Thử click trực tiếp vào nút slot trên panel ban đầu ("Hình đại diện" hoặc "Thành phần")
+          const slotBtnHandle = await page.evaluateHandle((isAvatar) => {
+            const all = Array.from(document.querySelectorAll('button, div[role="button"], span, div'));
+            const btn = all.find(e => {
+              const txt = (e.innerText || '').trim().toLowerCase();
+              const aria = (e.getAttribute('aria-label') || '').trim().toLowerCase();
+              if (isAvatar) {
+                return txt === 'hình đại diện' || txt.includes('đại diện') || aria.includes('hình đại diện') || txt === 'avatar';
               } else {
-                await fc.accept([imgFile]);
-                log('info', `✅ Đã gắn xong ảnh #1 (${path.basename(imgFile)}) vào slot Thành phần`);
-                await sleep(3500);
+                return txt === 'thành phần' || txt.includes('thành phần') || aria.includes('thành phần');
               }
+            });
+            return btn ? (btn.closest('button, div[role="button"]') || btn) : null;
+          }, isAvatarSlot);
+
+          const slotBtn = slotBtnHandle.asElement();
+          if (slotBtn) {
+            const box = await slotBtn.boundingBox();
+            const fcPromise = page.waitForFileChooser({ timeout: 8000 }).catch(() => null);
+            if (box && box.width > 0 && box.height > 0) {
+              await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
             } else {
-              const fileInputs = await page.$$('input[type="file"]');
-              if (fileInputs.length > 0) {
-                await fileInputs[fileInputs.length - 1].uploadFile(imgFile);
-                log('info', `✅ Đã tải xong ảnh #1 qua input file`);
-                await sleep(3500);
-              }
+              await slotBtn.click();
             }
-          } else {
-            // Ảnh #2 và #3: Bấm nút "+ Thêm" rồi chọn "Tải lên"
+            const fc = await fcPromise;
+            if (fc) {
+              await fc.accept([slot.path]);
+              log('info', `✅ Đã nạp thành công [${slot.name}] vào đúng slot!`);
+              await sleep(3500);
+              uploaded = true;
+            }
+          }
+
+          // 2. Nếu slot ban đầu đã có ảnh hoặc menu chưa mở, bấm nút "+ Thêm" (Thêm hình đại diện hoặc thành phần)
+          if (!uploaded) {
             const addBtnHandle = await page.evaluateHandle(() => {
               const btn = document.querySelector('button[aria-label="Thêm hình đại diện hoặc thành phần"], .videoGenCreationViewFileInputsInputSelectButton');
               if (btn) return btn;
@@ -200,58 +230,55 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], outputD
               }
               await sleep(1500);
 
-              const taiLenHandle = await page.evaluateHandle(() => {
+              // Menu popup xổ ra: chọn "Hình đại diện" hoặc "Thành phần" tương ứng
+              const menuItemHandle = await page.evaluateHandle((isAvatar) => {
                 const all = Array.from(document.querySelectorAll('button, div[role="button"], span, div, [role="menuitem"]'));
-                const items = all.filter(e => {
+                let target = all.find(e => {
                   const txt = (e.innerText || '').trim().toLowerCase();
-                  return txt.includes('tải lên') || txt.includes('upload') || txt.includes('tệp') || txt.includes('máy tính');
+                  if (isAvatar) return txt.includes('hình đại diện') || txt.includes('avatar');
+                  return txt.includes('thành phần') || txt.includes('element');
                 });
-                return items.length > 0 ? (items[items.length - 1].closest('button, div[role="button"], [role="menuitem"]') || items[items.length - 1]) : null;
-              });
-              const taiLenEl = taiLenHandle.asElement();
-              if (taiLenEl) {
-                const taiLenBox = await taiLenEl.boundingBox();
+                if (!target) {
+                  target = all.find(e => {
+                    const txt = (e.innerText || '').trim().toLowerCase();
+                    return txt.includes('tải lên') || txt.includes('upload') || txt.includes('tệp') || txt.includes('máy tính');
+                  });
+                }
+                return target ? (target.closest('button, div[role="button"], [role="menuitem"]') || target) : null;
+              }, isAvatarSlot);
+
+              const menuItem = menuItemHandle.asElement();
+              if (menuItem) {
+                const mBox = await menuItem.boundingBox();
                 const fcPromise = page.waitForFileChooser({ timeout: 8000 }).catch(() => null);
-                if (taiLenBox && taiLenBox.width > 0 && taiLenBox.height > 0) {
-                  await page.mouse.click(taiLenBox.x + taiLenBox.width / 2, taiLenBox.y + taiLenBox.height / 2);
+                if (mBox && mBox.width > 0 && mBox.height > 0) {
+                  await page.mouse.click(mBox.x + mBox.width / 2, mBox.y + mBox.height / 2);
                 } else {
-                  await page.evaluate(el => el && el.click(), taiLenEl);
+                  await page.evaluate(el => el && el.click(), menuItem);
                 }
                 const fc = await fcPromise;
                 if (fc) {
-                  await fc.accept([imgFile]);
-                  log('info', `✅ Đã gắn xong ảnh #${i + 1} (${path.basename(imgFile)})`);
+                  await fc.accept([slot.path]);
+                  log('info', `✅ Đã nạp thành công [${slot.name}] qua menu Thêm!`);
                   await sleep(3500);
-                } else {
-                  // Fallback: upload trực tiếp vào input[type="file"]
-                  const fileInputs = await page.$$('input[type="file"]');
-                  if (fileInputs.length > 0) {
-                    await fileInputs[fileInputs.length - 1].uploadFile(imgFile);
-                    log('info', `✅ Đã tải xong ảnh #${i + 1} qua input file trực tiếp`);
-                    await sleep(3500);
-                  }
+                  uploaded = true;
                 }
-              } else {
-                // Fallback nếu không thấy nút menu popup
-                const fileInputs = await page.$$('input[type="file"]');
-                if (fileInputs.length > 0) {
-                  await fileInputs[fileInputs.length - 1].uploadFile(imgFile);
-                  log('info', `✅ Đã tải xong ảnh #${i + 1} qua input file fallback`);
-                  await sleep(3500);
-                }
-              }
-            } else {
-              // Thử tìm thẳng input[type="file"]
-              const fileInputs = await page.$$('input[type="file"]');
-              if (fileInputs.length > 0) {
-                await fileInputs[fileInputs.length - 1].uploadFile(imgFile);
-                log('info', `✅ Đã tải xong ảnh #${i + 1} qua input file trực tiếp`);
-                await sleep(3500);
               }
             }
           }
+
+          // 3. Fallback: nạp qua input[type="file"]
+          if (!uploaded) {
+            const fileInputs = await page.$$('input[type="file"]');
+            if (fileInputs.length > 0) {
+              await fileInputs[fileInputs.length - 1].uploadFile(slot.path);
+              log('info', `✅ Đã nạp [${slot.name}] qua input file fallback.`);
+              await sleep(3500);
+              uploaded = true;
+            }
+          }
         } catch (err) {
-          log('warning', `⚠️ Cảnh báo tải ảnh #${i + 1}: ${err.message}`);
+          log('warning', `⚠️ Cảnh báo tải [${slot.name}]: ${err.message}`);
         }
       }
 

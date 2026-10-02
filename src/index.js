@@ -252,21 +252,27 @@ export async function processRow(row, logger = (level, msg) => console.log(`[${l
       logger('info', '🎬 Đang kết nối Google Vids (0 Credit, gói Ultra)...');
       const numVideos = parseInt(row['Số Video'] || '2', 10);
       
-      // Lưu file ảnh để import trực tiếp vào Google Vids qua "Thành phần"
-      // ƯU TIÊN #1: ẢNH SẢN PHẨM PHẢI LUÔN Ở ĐẦU TIÊN (để không bao giờ bị lệch mẫu sản phẩm)
+      // Lưu file ảnh chuẩn bị cho Google Vids:
+      // - MẪU ẢNH (imgMA) -> Nạp chuẩn xác vào ô "Hình đại diện" (Avatar) để AI nhận diện đúng mặt người mẫu
+      // - SẢN PHẨM (imgSP) -> Nạp chuẩn xác vào ô "Thành phần" (Components) để người mẫu cầm đúng sản phẩm
+      // - BACKGROUND (imgBG) -> Nạp bổ sung vào ô "Thành phần"
+      let pMA = null;
+      let pSP = null;
+      let pBG = null;
       const imageFiles = [];
-      if (imgSP) {
-        const pSP = path.join(workDir, 'input_san_pham.jpg');
-        fs.writeFileSync(pSP, imgSP);
-        imageFiles.push(pSP);
-      }
+
       if (imgMA) {
-        const pMA = path.join(workDir, 'input_mau_anh.jpg');
+        pMA = path.join(workDir, 'input_mau_anh.jpg');
         fs.writeFileSync(pMA, imgMA);
         imageFiles.push(pMA);
       }
+      if (imgSP) {
+        pSP = path.join(workDir, 'input_san_pham.jpg');
+        fs.writeFileSync(pSP, imgSP);
+        imageFiles.push(pSP);
+      }
       if (imgBG) {
-        const pBG = path.join(workDir, 'input_background.jpg');
+        pBG = path.join(workDir, 'input_background.jpg');
         fs.writeFileSync(pBG, imgBG);
         imageFiles.push(pBG);
       }
@@ -274,7 +280,7 @@ export async function processRow(row, logger = (level, msg) => console.log(`[${l
       const hasRefImages = imageFiles.length > 0;
       let vidsPrompts = [];
       try {
-        logger('info', `✨ Gemini AI đang thiết lập ${numVideos} phân cảnh (đính kèm ${imageFiles.length} ảnh nguyên liệu: SP, Mẫu, BG)...`);
+        logger('info', `✨ Gemini AI đang thiết lập ${numVideos} phân cảnh (Mẫu ảnh -> Avatar, Sản phẩm -> Thành phần)...`);
         vidsPrompts = await AI.generateVidsPrompts(numVideos, row['Tên Sản Phẩm'], row['Content Video'], pAnalysis, maAnalysis, bgAnalysis, hasRefImages);
       } catch (e) {
         logger('warning', `Lỗi AI thiết lập kịch bản: ${e.message}. Sử dụng kịch bản tiếng Việt chuẩn.`);
@@ -283,11 +289,14 @@ export async function processRow(row, logger = (level, msg) => console.log(`[${l
 
       const clipPaths = [];
       for (let i = 0; i < vidsPrompts.length; i++) {
-        logger('info', `🎥 [Clip #${i + 1}/${vidsPrompts.length}] Đang gửi kịch bản và tải ${imageFiles.length} ảnh vào Google Vids...`);
+        logger('info', `🎥 [Clip #${i + 1}/${vidsPrompts.length}] Đang nạp Mẫu ảnh (Avatar) & Sản phẩm (Thành phần) vào Google Vids...`);
         logger('info', `📝 Prompt #${i + 1}: "${vidsPrompts[i].substring(0, 100)}..."`);
         const clipDir = path.join(workDir, `clip_${i + 1}`);
         const clipFile = await createVideoInGoogleVids({
           prompt: vidsPrompts[i],
+          avatarPath: pMA,
+          productPath: pSP,
+          backgroundPath: pBG,
           imagePaths: imageFiles,
           outputDir: clipDir,
           logger: (level, msg) => logger(level, msg)

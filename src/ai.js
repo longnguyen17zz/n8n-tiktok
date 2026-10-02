@@ -146,19 +146,19 @@ export async function generateVidsPrompts(numVideos = 2, productName, contentVid
   if (hasRefImages) {
     if (count === 1) {
       return [
-        `Từ các hình ảnh tôi gửi, hãy tạo 1 video review ${productName}. Trong đó: sản phẩm chính xác tuyệt đối là ở hình 1, người mẫu review là ở hình 2 và không gian background là ở hình 3. Mở đầu người mẫu cười tươi chào và cầm giới thiệu đúng sản phẩm ở hình 1, trình diễn tính năng thực tế, cuối video chỉ tay xuống giỏ hàng bên góc trái bên dưới kêu gọi mua sắm. Thuyết minh tiếng Việt hoàn toàn.`
+        `Từ các hình ảnh đã đính kèm, hãy tạo 1 video review ${productName}. Trong đó: Người mẫu review chính là người ở mục Hình đại diện (Avatar), trên tay cầm và giới thiệu đúng mẫu sản phẩm ở mục Thành phần (tuyệt đối giữ nguyên kiểu dáng, màu sắc sản phẩm). Mở đầu người mẫu cười tươi chào đón, trình diễn tính năng thực tế của sản phẩm, cuối video chỉ tay xuống giỏ hàng bên góc trái bên dưới kêu gọi mua sắm. Thuyết minh tiếng Việt hoàn toàn.`
       ];
     }
 
     const prompts = [
       // Clip 1: Mở đầu chào hỏi, giới thiệu tính năng dở dang (KHÔNG chào kết)
-      `Từ các hình ảnh tôi gửi, hãy tạo đoạn video MỞ ĐẦU review ${productName}. QUAN TRỌNG NHẤT: sản phẩm review trên tay bắt buộc phải là đúng mẫu sản phẩm ở hình 1, người mẫu là ở hình 2 và background là ở hình 3. Người mẫu mở đầu chào đón người xem, tự tin cầm sản phẩm hình 1 giới thiệu và hào hứng bắt đầu thử nghiệm tính năng nổi bật. Giữ diễn biến đang diễn ra dở dang đầy tò mò, TUYỆT ĐỐI KHÔNG chào tạm biệt hay kết thúc video. Thuyết minh tiếng Việt cuốn hút.`,
+      `Từ các hình ảnh đã đính kèm, hãy tạo đoạn video MỞ ĐẦU review ${productName}. QUAN TRỌNG NHẤT: người mẫu review bắt buộc phải là đúng người mẫu ở mục Hình đại diện (Avatar), trên tay tự tin cầm và giới thiệu đúng mẫu sản phẩm ở mục Thành phần. Người mẫu mở đầu chào đón người xem, hào hứng bắt đầu thử nghiệm tính năng nổi bật của sản phẩm. Giữ diễn biến đang diễn ra dở dang đầy tò mò, TUYỆT ĐỐI KHÔNG chào tạm biệt hay kết thúc video. Thuyết minh tiếng Việt cuốn hút.`,
       
       // Clip 2: Nối tiếp ngay cảnh trước (KHÔNG chào lại), trải nghiệm kết quả & Chốt đơn kết thúc
-      `Từ các hình ảnh tôi gửi, hãy tạo đoạn video NỐI TIẾP VÀ KẾT THÚC của cảnh trước cho ${productName}. BẮT BUỘC GIỮ NGUYÊN 100% ĐÚNG MẪU SẢN PHẨM Ở HÌNH 1 (tuyệt đối không thay đổi kiểu dáng, màu sắc sản phẩm), cùng đúng người mẫu ở hình 2 và background ở hình 3. Bắt đầu ngay bằng việc TIẾP TỤC thử nghiệm sản phẩm hình 1 từ cảnh trước, KHÔNG chào hỏi lại từ đầu. Người mẫu gật đầu hài lòng trước hiệu quả vượt trội của sản phẩm, rồi cười rạng rỡ dùng tay chỉ vào giỏ hàng bên góc trái bên dưới màn hình kêu gọi đặt mua ngay, vẫy tay chào tạm biệt kết thúc video. Thuyết minh tiếng Việt: "Nhấn ngay vào giỏ hàng bên góc trái bên dưới để nhận ưu đãi nhé!".`,
+      `Từ các hình ảnh đã đính kèm, hãy tạo đoạn video NỐI TIẾP VÀ KẾT THÚC của cảnh trước cho ${productName}. BẮT BUỘC GIỮ NGUYÊN 100% ĐÚNG NGƯỜI MẪU Ở MỤC HÌNH ĐẠI DIỆN và ĐÚNG MẪU SẢN PHẨM Ở MỤC THÀNH PHẦN từ cảnh trước (tuyệt đối không thay đổi kiểu dáng, trang phục, diện mạo). Bắt đầu ngay bằng việc TIẾP TỤC thử nghiệm sản phẩm, KHÔNG chào hỏi lại từ đầu. Người mẫu gật đầu hài lòng trước hiệu quả vượt trội của sản phẩm, rồi cười rạng rỡ dùng tay chỉ vào giỏ hàng bên góc trái bên dưới màn hình kêu gọi đặt mua ngay, vẫy tay chào tạm biệt kết thúc video. Thuyết minh tiếng Việt: "Nhấn ngay vào giỏ hàng bên góc trái bên dưới để nhận ưu đãi nhé!".`,
 
       // Clip 3 (nếu có): Cận cảnh chi tiết bổ sung
-      `Từ các hình ảnh tôi gửi, hãy tạo 1 video cận cảnh chất liệu của đúng mẫu sản phẩm ở hình 1, cùng người mẫu ở hình 2 trong không gian hình 3. Từng đường nét chi tiết tinh tế của sản phẩm hình 1 hiển thị sắc nét, người mẫu mỉm cười ưng ý. Thuyết minh tiếng Việt hoàn toàn.`
+      `Từ các hình ảnh đã đính kèm, hãy tạo 1 video cận cảnh chất liệu của đúng mẫu sản phẩm ở mục Thành phần, cùng người mẫu ở mục Hình đại diện. Từng đường nét chi tiết tinh tế của sản phẩm hiển thị sắc nét, người mẫu mỉm cười ưng ý. Thuyết minh tiếng Việt hoàn toàn.`
     ];
     return prompts.slice(0, count);
   }
