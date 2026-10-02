@@ -281,10 +281,13 @@ export async function processRow(row, logger = (level, msg) => console.log(`[${l
       let vidsPrompts = [];
       try {
         logger('info', `✨ Gemini AI đang thiết lập ${numVideos} phân cảnh (Mẫu ảnh -> Avatar, Sản phẩm -> Thành phần)...`);
-        vidsPrompts = await AI.generateVidsPrompts(numVideos, row['Tên Sản Phẩm'], row['Content Video'], pAnalysis, maAnalysis, bgAnalysis, hasRefImages);
+        if ((row['Kịch Bản'] || '').trim()) {
+          logger('info', `📜 Áp dụng Kịch Bản từ Sheet: "${row['Kịch Bản'].trim().slice(0, 80)}..."`);
+        }
+        vidsPrompts = await AI.generateVidsPrompts(numVideos, row['Tên Sản Phẩm'], row['Content Video'], pAnalysis, maAnalysis, bgAnalysis, hasRefImages, row['Kịch Bản']);
       } catch (e) {
         logger('warning', `Lỗi AI thiết lập kịch bản: ${e.message}. Sử dụng kịch bản tiếng Việt chuẩn.`);
-        vidsPrompts = await AI.generateVidsPrompts(numVideos, row['Tên Sản Phẩm'], row['Content Video'], null, null, null, hasRefImages);
+        vidsPrompts = await AI.generateVidsPrompts(numVideos, row['Tên Sản Phẩm'], row['Content Video'], null, null, null, hasRefImages, row['Kịch Bản']);
       }
 
       const clipPaths = [];

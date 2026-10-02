@@ -140,25 +140,38 @@ export const LOCKED_MODEL_PROFILE = "Một cô gái trẻ 20 tuổi người ch�
  * ĐỒNG NHẤT 100% nhân vật mẫu nữ đã chốt trên tất cả các clip ghép lại.
  * Định dạng cô đọng chuẩn Google Vids AI (< 80 từ/cảnh) để sinh video 1 shot mượt mà, không bị kẹt.
  */
-export async function generateVidsPrompts(numVideos = 2, productName, contentVideo, productAnalysis, modelAnalysis, bgAnalysis, hasRefImages = false) {
+export async function generateVidsPrompts(numVideos = 2, productName, contentVideo, productAnalysis, modelAnalysis, bgAnalysis, hasRefImages = false, script = '') {
   const count = Math.max(1, Math.min(numVideos, 3));
+
+  // Nếu người dùng đã viết sẵn Kịch Bản trong Sheet, bám sát đúng nội dung/thoại đó thay vì
+  // để AI tự bịa diễn biến — kịch bản được áp dụng cho MỌI clip vì các clip ghép lại thành 1
+  // video liên tục nên cần cùng theo một mạch kịch bản. "Content Video" (ghi chú ngắn, nếu có
+  // và không trùng Kịch Bản) được thêm làm ngữ cảnh bổ sung nhẹ.
+  const trimmedScript = (script || '').trim();
+  const trimmedContent = (contentVideo || '').trim();
+  let guidanceClause = '';
+  if (trimmedScript) {
+    guidanceClause = `Bám sát đúng kịch bản sau cho diễn biến và lời thoại: "${trimmedScript}". `;
+  } else if (trimmedContent) {
+    guidanceClause = `Nội dung định hướng: "${trimmedContent}". `;
+  }
 
   if (hasRefImages) {
     if (count === 1) {
       return [
-        `Từ các hình ảnh nguyên liệu đã đính kèm: Hãy tạo 1 video review ${productName}. Trong đó: Người mẫu review chính bắt buộc phải có đúng diện mạo, khuôn mặt, mái tóc của ảnh chân dung người mẫu đính kèm; trên tay tự tin cầm và giới thiệu đúng mẫu sản phẩm trong ảnh đính kèm (giữ nguyên kiểu dáng, màu sắc, chi tiết sản phẩm); diễn ra trong không gian bối cảnh đính kèm. Mở đầu người mẫu cười tươi chào đón, trình diễn tính năng thực tế của sản phẩm, cuối video chỉ tay xuống giỏ hàng bên góc trái bên dưới kêu gọi mua sắm. Thuyết minh tiếng Việt hoàn toàn.`
+        `${guidanceClause}Từ các hình ảnh nguyên liệu đã đính kèm: Hãy tạo 1 video review ${productName}. Trong đó: Người mẫu review chính bắt buộc phải có đúng diện mạo, khuôn mặt, mái tóc của ảnh chân dung người mẫu đính kèm; trên tay tự tin cầm và giới thiệu đúng mẫu sản phẩm trong ảnh đính kèm (giữ nguyên kiểu dáng, màu sắc, chi tiết sản phẩm); diễn ra trong không gian bối cảnh đính kèm. Mở đầu người mẫu cười tươi chào đón, trình diễn tính năng thực tế của sản phẩm, cuối video chỉ tay xuống giỏ hàng bên góc trái bên dưới kêu gọi mua sắm. Thuyết minh tiếng Việt hoàn toàn.`
       ];
     }
 
     const prompts = [
       // Clip 1: Mở đầu chào hỏi, giới thiệu tính năng dở dang (KHÔNG chào kết)
-      `Từ các hình ảnh nguyên liệu đã đính kèm, hãy tạo đoạn video MỞ ĐẦU review ${productName}. QUAN TRỌNG NHẤT: người mẫu review bắt buộc phải có đúng diện mạo, khuôn mặt, mái tóc của ảnh chân dung người mẫu đã đính kèm; trên tay tự tin cầm và giới thiệu đúng mẫu sản phẩm trong ảnh đính kèm; bối cảnh không gian theo ảnh nền đính kèm. Người mẫu mở đầu chào đón người xem, hào hứng bắt đầu thử nghiệm tính năng nổi bật của sản phẩm. Giữ diễn biến đang diễn ra dở dang đầy tò mò, TUYỆT ĐỐI KHÔNG chào tạm biệt hay kết thúc video. Thuyết minh tiếng Việt cuốn hút.`,
-      
+      `${guidanceClause}Từ các hình ảnh nguyên liệu đã đính kèm, hãy tạo đoạn video MỞ ĐẦU review ${productName}. QUAN TRỌNG NHẤT: người mẫu review bắt buộc phải có đúng diện mạo, khuôn mặt, mái tóc của ảnh chân dung người mẫu đã đính kèm; trên tay tự tin cầm và giới thiệu đúng mẫu sản phẩm trong ảnh đính kèm; bối cảnh không gian theo ảnh nền đính kèm. Người mẫu mở đầu chào đón người xem, hào hứng bắt đầu thử nghiệm tính năng nổi bật của sản phẩm. Giữ diễn biến đang diễn ra dở dang đầy tò mò, TUYỆT ĐỐI KHÔNG chào tạm biệt hay kết thúc video. Thuyết minh tiếng Việt cuốn hút.`,
+
       // Clip 2: Nối tiếp ngay cảnh trước (KHÔNG chào lại), trải nghiệm kết quả & Chốt đơn kết thúc
-      `Từ các hình ảnh nguyên liệu đã đính kèm, hãy tạo đoạn video NỐI TIẾP VÀ KẾT THÚC của cảnh trước cho ${productName}. BẮT BUỘC GIỮ NGUYÊN 100% ĐÚNG DIỆN MẠO NGƯỜI MẪU và ĐÚNG MẪU SẢN PHẨM trong các ảnh đính kèm từ cảnh trước (tuyệt đối không thay đổi kiểu dáng, trang phục, diện mạo). Bắt đầu ngay bằng việc TIẾP TỤC thử nghiệm sản phẩm, KHÔNG chào hỏi lại từ đầu. Người mẫu gật đầu hài lòng trước hiệu quả vượt trội của sản phẩm, rồi cười rạng rỡ dùng tay chỉ vào giỏ hàng bên góc trái bên dưới màn hình kêu gọi đặt mua ngay, vẫy tay chào tạm biệt kết thúc video. Thuyết minh tiếng Việt: "Nhấn ngay vào giỏ hàng bên góc trái bên dưới để nhận ưu đãi nhé!".`,
+      `${guidanceClause}Từ các hình ảnh nguyên liệu đã đính kèm, hãy tạo đoạn video NỐI TIẾP VÀ KẾT THÚC của cảnh trước cho ${productName}. BẮT BUỘC GIỮ NGUYÊN 100% ĐÚNG DIỆN MẠO NGƯỜI MẪU và ĐÚNG MẪU SẢN PHẨM trong các ảnh đính kèm từ cảnh trước (tuyệt đối không thay đổi kiểu dáng, trang phục, diện mạo). Bắt đầu ngay bằng việc TIẾP TỤC thử nghiệm sản phẩm, KHÔNG chào hỏi lại từ đầu. Người mẫu gật đầu hài lòng trước hiệu quả vượt trội của sản phẩm, rồi cười rạng rỡ dùng tay chỉ vào giỏ hàng bên góc trái bên dưới màn hình kêu gọi đặt mua ngay, vẫy tay chào tạm biệt kết thúc video. Thuyết minh tiếng Việt: "Nhấn ngay vào giỏ hàng bên góc trái bên dưới để nhận ưu đãi nhé!".`,
 
       // Clip 3 (nếu có): Cận cảnh chi tiết bổ sung
-      `Từ các hình ảnh nguyên liệu đã đính kèm, hãy tạo 1 video cận cảnh chất liệu của đúng mẫu sản phẩm đã đính kèm, cùng người mẫu trong ảnh chân dung đính kèm. Từng đường nét chi tiết tinh tế của sản phẩm hiển thị sắc nét, người mẫu mỉm cười ưng ý. Thuyết minh tiếng Việt hoàn toàn.`
+      `${guidanceClause}Từ các hình ảnh nguyên liệu đã đính kèm, hãy tạo 1 video cận cảnh chất liệu của đúng mẫu sản phẩm đã đính kèm, cùng người mẫu trong ảnh chân dung đính kèm. Từng đường nét chi tiết tinh tế của sản phẩm hiển thị sắc nét, người mẫu mỉm cười ưng ý. Thuyết minh tiếng Việt hoàn toàn.`
     ];
     return prompts.slice(0, count);
   }
@@ -169,25 +182,25 @@ export async function generateVidsPrompts(numVideos = 2, productName, contentVid
 
   if (count === 1) {
     return [
-      `Video quảng cáo dọc 9:16. ${activeModel}, đang ở trong ${activeBg}, trên tay cầm và tự tin giới thiệu sản phẩm ${productName}, trải nghiệm tính năng và cuối video hướng tay xuống giỏ hàng bên góc trái bên dưới. Thuyết minh tiếng Việt hoàn toàn.`
+      `${guidanceClause}Video quảng cáo dọc 9:16. ${activeModel}, đang ở trong ${activeBg}, trên tay cầm và tự tin giới thiệu sản phẩm ${productName}, trải nghiệm tính năng và cuối video hướng tay xuống giỏ hàng bên góc trái bên dưới. Thuyết minh tiếng Việt hoàn toàn.`
     ];
   }
 
   const prompts = [
     // Clip 1: Mở đầu và để ngỏ dở dang
-    `Video quảng cáo dọc 9:16, góc quay trung. ${activeModel}, đang ở trong ${activeBg}, mở đầu tươi cười chào người xem và bắt đầu giới thiệu ${productName}, hào hứng bắt đầu thử nghiệm công năng của sản phẩm, diễn biến đang tiếp diễn dở dang, KHÔNG chào tạm biệt, KHÔNG kết thúc video. Thuyết minh tiếng Việt tự nhiên lôi cuốn.`,
-    
+    `${guidanceClause}Video quảng cáo dọc 9:16, góc quay trung. ${activeModel}, đang ở trong ${activeBg}, mở đầu tươi cười chào người xem và bắt đầu giới thiệu ${productName}, hào hứng bắt đầu thử nghiệm công năng của sản phẩm, diễn biến đang tiếp diễn dở dang, KHÔNG chào tạm biệt, KHÔNG kết thúc video. Thuyết minh tiếng Việt tự nhiên lôi cuốn.`,
+
     // Clip 2: Nối tiếp ngay lập tức & Chốt đơn kết thúc
-    `Video quảng cáo dọc 9:16, góc quay cận trung. Đúng cô gái trẻ mặt trái xoan tàn nhang nhẹ tóc xoăn mái thưa mặc áo trắng đó, giữ nguyên trang phục và diện mạo, TIẾP TỤC trải nghiệm tính năng của ${productName} từ cảnh trước, KHÔNG chào lại từ đầu. Cô gái gật đầu ưng ý, cười tươi rạng rỡ và chỉ tay vào giỏ hàng bên góc trái bên dưới màn hình kêu gọi mua ngay, vẫy tay chào tạm biệt kết thúc video. Thuyết minh tiếng Việt: "Nhấn ngay vào giỏ hàng bên góc trái bên dưới nhé!".`,
+    `${guidanceClause}Video quảng cáo dọc 9:16, góc quay cận trung. Đúng cô gái trẻ mặt trái xoan tàn nhang nhẹ tóc xoăn mái thưa mặc áo trắng đó, giữ nguyên trang phục và diện mạo, TIẾP TỤC trải nghiệm tính năng của ${productName} từ cảnh trước, KHÔNG chào lại từ đầu. Cô gái gật đầu ưng ý, cười tươi rạng rỡ và chỉ tay vào giỏ hàng bên góc trái bên dưới màn hình kêu gọi mua ngay, vẫy tay chào tạm biệt kết thúc video. Thuyết minh tiếng Việt: "Nhấn ngay vào giỏ hàng bên góc trái bên dưới nhé!".`,
 
     // Clip 3 (nếu có): Cận cảnh chi tiết
-    `Video quảng cáo dọc 9:16, góc quay cận cảnh. Đúng cô gái đó trong ${activeBg}, nâng niu sản phẩm ${productName}, cận cảnh từng đường nét sắc nét, mỉm cười gật đầu hài lòng. Thuyết minh tiếng Việt hoàn toàn.`
+    `${guidanceClause}Video quảng cáo dọc 9:16, góc quay cận cảnh. Đúng cô gái đó trong ${activeBg}, nâng niu sản phẩm ${productName}, cận cảnh từng đường nét sắc nét, mỉm cười gật đầu hài lòng. Thuyết minh tiếng Việt hoàn toàn.`
   ];
 
   return prompts.slice(0, count);
 }
 
-export async function generateVidsPrompt(productName, contentVideo, productAnalysis) {
-  const prompts = await generateVidsPrompts(1, productName, contentVideo, productAnalysis, null, null);
+export async function generateVidsPrompt(productName, contentVideo, productAnalysis, script = '') {
+  const prompts = await generateVidsPrompts(1, productName, contentVideo, productAnalysis, null, null, false, script);
   return prompts[0];
 }
