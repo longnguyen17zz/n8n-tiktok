@@ -172,90 +172,111 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
         const fileInputs = await page.$$('input[type="file"]');
         if (fileInputs.length > 0) {
           const targetInput = fileInputs[fileInputs.length - 1];
+          await page.evaluate(el => {
+            if (el) {
+              el.setAttribute('multiple', '');
+              el.multiple = true;
+            }
+          }, targetInput);
           const allPaths = slots.map(s => s.path);
           await targetInput.uploadFile(...allPaths);
           await page.evaluate(el => {
             if (el) el.dispatchEvent(new Event('change', { bubbles: true }));
           }, targetInput);
-          log('info', `✅ Đã nạp ${allPaths.length} ảnh nguyên liệu vào Google Vids!`);
+          log('info', `✅ Đã nạp batch ${allPaths.length} ảnh nguyên liệu vào Google Vids!`);
           await sleep(3500);
           allBatchUploaded = true;
         }
       } catch (eBatch) {}
 
-      // 2. Nếu nạp đồng loạt chưa được, nạp từng file và xử lý modal Mở tệp nếu xuất hiện
-      if (!allBatchUploaded) {
-        for (let i = 0; i < slots.length; i++) {
-          const slot = slots[i];
-          log('info', `📸 Đang tải [${slot.name}]: ${path.basename(slot.path)}...`);
+      // 2. Nạp từng file còn lại qua nút "+ Thêm" trên giao diện (hỗ trợ cả iframe Google Picker)
+      for (let i = 0; i < slots.length; i++) {
+        const slot = slots[i];
 
-          let uploaded = false;
+        // Kiểm tra xem slot thứ (i + 1) đã có ảnh nạp chưa
+        const isAlreadyUploaded = await page.evaluate((idx) => {
+          const chips = Array.from(document.querySelectorAll('[role="listitem"], .videoGenCreationViewFileInputsChip, div'));
+          return chips.some(c => (c.innerText || '').includes(`Hình ảnh${idx + 1}`) || (c.innerText || '').includes(`Ảnh ${idx + 1}`));
+        }, i);
 
-          // Thử nạp qua thẻ input file
-          try {
-            const fileInputs = await page.$$('input[type="file"]');
-            if (fileInputs.length > 0) {
-              const targetInput = fileInputs[fileInputs.length - 1];
-              await page.evaluate(el => { if (el) el.value = ''; }, targetInput);
-              await targetInput.uploadFile(slot.path);
-              await page.evaluate(el => {
-                if (el) el.dispatchEvent(new Event('change', { bubbles: true }));
-              }, targetInput);
-              log('info', `✅ Đã nạp thành công [${slot.name}] vào nguyên liệu AI!`);
-              await sleep(3000);
-              uploaded = true;
-            }
-          } catch (e1) {}
+        if (allBatchUploaded && isAlreadyUploaded) {
+          log('info', `✅ Ảnh [${slot.name}] đã có sẵn trong khung tạo!`);
+          continue;
+        }
 
-          // Nếu chưa được, bấm nút "+ Thêm"
-          if (!uploaded) {
-            try {
-              const addBtnHandle = await page.evaluateHandle(() => {
-                const scope = document.querySelector('.videoGenCreationView, [role="dialog"], .collapsiblePromptBox') || document.body;
-                const buttons = Array.from(scope.querySelectorAll('button, div[role="button"]'));
-                return buttons.find(e => {
-                  const aria = (e.getAttribute('aria-label') || '').toLowerCase();
-                  const txt = (e.innerText || '').toLowerCase();
-                  return aria.includes('thêm') || txt.includes('thêm') || aria.includes('thành phần') || txt.includes('thành phần');
-                }) || null;
-              });
+        log('info', `📸 Đang tải [${slot.name}]: ${path.basename(slot.path)}...`);
+        let uploaded = false;
 
-              const addBtn = addBtnHandle.asElement();
-              if (addBtn) {
-                await page.evaluate(el => { if (el) el.click(); }, addBtn);
-                await sleep(1500);
+        // Thử tìm nút "+ Thêm" dạng khung nét đứt cạnh ảnh đã nạp
+        try {
+          const addBtnHandle = await page.evaluateHandle(() => {
+            const all = Array.from(document.querySelectorAll('button, div[role="button"], div'));
+            return all.find(e => {
+              const t = (e.innerText || '').trim();
+              const rect = e.getBoundingClientRect();
+              return (t === '+ Thêm' || t === 'Thêm' || (e.getAttribute('aria-label') || '').includes('Thêm')) && 
+                     rect.width > 20 && rect.height > 20 && rect.top > window.innerHeight * 0.4 &&
+                     rect.left < window.innerWidth - 65; // Tránh nhầm với rail sidebar bên phải
+            }) || null;
+          });
 
-                // Nếu xuất hiện modal "Mở tệp" của Google Picker: bấm vào tab "Tải lên" / "Máy tính"
-                await page.evaluate(() => {
-                  const allElements = Array.from(document.querySelectorAll('div, span, button, [role="tab"]'));
-                  const uploadTab = allElements.find(e => {
+          const addBtn = addBtnHandle.asElement();
+          if (addBtn) {
+            await page.evaluate(el => el && el.click(), addBtn);
+            await sleep(1800);
+
+            // Tìm và click tab "Tải lên" / "Máy tính" / "Upload" trên TẤT CẢ các frame (bao gồm iframe Google Picker)
+            const allFrames = [page.mainFrame(), ...page.frames().filter(f => f !== page.mainFrame())];
+            for (const frame of allFrames) {
+              try {
+                await frame.evaluate(() => {
+                  const elements = Array.from(document.querySelectorAll('div, span, button, [role="tab"], a'));
+                  const uploadTab = elements.find(e => {
                     const t = (e.innerText || '').trim();
                     return t === 'Tải lên' || t === 'Máy tính' || t === 'Upload';
                   });
                   if (uploadTab) uploadTab.click();
                 });
-                await sleep(1200);
+              } catch (e) {}
+            }
+            await sleep(1500);
 
-                // Tìm input file bên trong modal Mở tệp để tải file
-                const pickerInputs = await page.$$('input[type="file"]');
-                if (pickerInputs.length > 0) {
-                  const pInput = pickerInputs[pickerInputs.length - 1];
-                  await pInput.uploadFile(slot.path);
+            // Tìm input file trong TẤT CẢ các frame để nạp file
+            for (const frame of allFrames) {
+              try {
+                const fInputs = await frame.$$('input[type="file"]');
+                if (fInputs.length > 0) {
+                  const targetInput = fInputs[fInputs.length - 1];
+                  await targetInput.uploadFile(slot.path);
+                  try {
+                    await frame.evaluate(el => {
+                      if (el) el.dispatchEvent(new Event('change', { bubbles: true }));
+                    }, targetInput);
+                  } catch (e) {}
                   log('info', `✅ Đã nạp thành công [${slot.name}] qua hộp thoại Mở tệp!`);
                   await sleep(3500);
                   uploaded = true;
+                  break;
                 }
-              }
-            } catch (e2) {}
+              } catch (e) {}
+            }
           }
+        } catch (eAdd) {}
 
-          if (!uploaded) {
-            log('warning', `⚠️ Chưa thể nạp file [${slot.name}], tiếp tục với các nguyên liệu khác.`);
-          }
+        // Đóng modal Mở tệp nếu còn mở
+        await page.evaluate(() => {
+          const closeBtns = Array.from(document.querySelectorAll('button[aria-label="Đóng"], button[aria-label="Close"], .picker-dialog-close'));
+          closeBtns.forEach(b => { try { b.click(); } catch (e) {} });
+        });
+        await page.keyboard.press('Escape');
+        await sleep(800);
+
+        if (!uploaded && i > 0) {
+          log('info', `ℹ️ Đã hoàn tất nạp mẫu chính, tiếp tục quá trình tạo video.`);
         }
       }
 
-      // ĐẢM BẢO ĐÓNG HOÀN TOÀN MỌI MODAL / HỘP THOẠI "MỞ TỆP" TRƯỚC KHI NHẬP PROMPT
+      // ĐẢM BẢO ĐÓNG HOÀN TOÀN MỌI MODAL / HỘP THOẠI TRƯỚC KHI NHẬP PROMPT
       await page.evaluate(() => {
         const closeBtns = Array.from(document.querySelectorAll('button[aria-label="Đóng"], button[aria-label="Close"], .picker-dialog-close, [aria-label="Huỷ"]'));
         closeBtns.forEach(b => { try { b.click(); } catch (e) {} });
@@ -283,9 +304,8 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
     await page.keyboard.type(prompt, { delay: 10 });
     await sleep(1500);
 
-    // 6. Bấm nút Tạo video AI (nút mũi tên tròn xanh .collapsiblePromptBoxGenerateButton)
+    // 6. Bấm nút Tạo video AI (nút tròn màu xanh có icon mũi tên lên ở góc dưới cùng bên phải của panel prompt)
     log('info', '🎬 Bấm nút Tạo video AI...');
-    // Đảm bảo không còn modal nào che chắn trước khi click nút Tạo
     await page.evaluate(() => {
       const closeBtns = Array.from(document.querySelectorAll('button[aria-label="Đóng"], button[aria-label="Close"], .picker-dialog-close'));
       closeBtns.forEach(b => { try { b.click(); } catch (e) {} });
@@ -293,33 +313,135 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
     await page.keyboard.press('Escape');
     await sleep(600);
 
+    // Tìm chính xác nút tròn màu xanh ở góc dưới cùng bên phải của panel prompt (tránh tuyệt đối thanh rail bên phải và tab Tạo ở trên)
     const submitBtnHandle = await page.evaluateHandle(() => {
-      return document.querySelector('button.collapsiblePromptBoxGenerateButton, button[aria-label="Tạo"].collapsiblePromptBoxGenerateButton, button[aria-label="Tạo"], button[aria-label="Generate"]');
+      // 1. Tìm trong container của textarea prompt
+      const allTextareas = Array.from(document.querySelectorAll('textarea, [contenteditable="true"], [role="textbox"]'));
+      const promptBox = allTextareas.find(t => {
+        const r = t.getBoundingClientRect();
+        return r.width > 120 && r.height > 40 && r.right > window.innerWidth * 0.4;
+      });
+
+      if (promptBox) {
+        let container = promptBox.parentElement;
+        for (let depth = 0; depth < 8; depth++) {
+          if (!container || container === document.body) break;
+          const rect = container.getBoundingClientRect();
+          if (rect.width > 250 && rect.height > 200 && rect.right > window.innerWidth * 0.5) {
+            const clickables = Array.from(container.querySelectorAll('button, div[role="button"], md-filled-icon-button, md-icon-button, [role="button"], div, span'));
+            const promptRect = promptBox.getBoundingClientRect();
+            
+            // Lọc các nút nằm dưới textarea và cách lề phải một khoảng an toàn (không phải sidebar tool rail)
+            const bottomBtns = clickables.filter(el => {
+              const r = el.getBoundingClientRect();
+              if (r.width < 20 || r.width > 70 || r.height < 20 || r.height > 70) return false;
+              if (r.top < promptRect.bottom) return false;
+              if (r.left > window.innerWidth - 65) return false; // Loại trừ thanh công cụ sidebar
+              return true;
+            });
+
+            // Ưu tiên nút có màu nền xanh
+            const blueBtn = bottomBtns.find(el => {
+              const style = window.getComputedStyle(el);
+              const bg = style.backgroundColor || '';
+              return bg.includes('rgb(') && !bg.includes('255, 255, 255') && !bg.includes('rgba(0, 0, 0, 0)');
+            });
+            if (blueBtn) return blueBtn;
+
+            // Nút có icon SVG ở góc dưới phải nhất trong container
+            const svgBtns = bottomBtns.filter(el => el.querySelector('svg') || el.tagName.toLowerCase() === 'svg');
+            if (svgBtns.length > 0) {
+              svgBtns.sort((a, b) => {
+                const rA = a.getBoundingClientRect();
+                const rB = b.getBoundingClientRect();
+                return (rB.top + rB.left) - (rA.top + rA.left);
+              });
+              return svgBtns[0];
+            }
+          }
+          container = container.parentElement;
+        }
+      }
+
+      // 2. Fallback tìm nút tròn xanh ở góc dưới bên phải (tránh nhầm với tab "Tạo" ở góc trên hoặc rail bên phải)
+      const allElements = Array.from(document.querySelectorAll('button, div[role="button"], md-filled-icon-button, md-icon-button, [role="button"], div'));
+      const candidates = allElements.filter(el => {
+        const rect = el.getBoundingClientRect();
+        if (rect.width < 24 || rect.width > 65 || rect.height < 24 || rect.height > 65) return false;
+        if (rect.bottom < window.innerHeight * 0.5 || rect.right < window.innerWidth * 0.6) return false;
+        if (rect.left > window.innerWidth - 65) return false; // Tránh rail bên phải
+        const style = window.getComputedStyle(el);
+        const bg = style.backgroundColor || '';
+        const isBlue = bg.includes('rgb(') && !bg.includes('255, 255, 255') && !bg.includes('rgba(0, 0, 0, 0)');
+        return isBlue || (el.querySelector('svg') && rect.width === rect.height);
+      });
+
+      if (candidates.length > 0) {
+        candidates.sort((a, b) => {
+          const rA = a.getBoundingClientRect();
+          const rB = b.getBoundingClientRect();
+          return (rB.top + rB.left) - (rA.top + rA.left);
+        });
+        return candidates[0];
+      }
+
+      return null;
     });
+
     const submitEl = submitBtnHandle.asElement();
     if (submitEl) {
-      await page.evaluate(el => {
-        if (el) {
-          el.scrollIntoView({ behavior: 'instant', block: 'center' });
-          el.click();
-        }
-      }, submitEl);
+      const sBox = await submitEl.boundingBox();
+      if (sBox && sBox.width > 0 && sBox.height > 0) {
+        log('info', `🎯 Đang click nút Tạo video AI tại tọa độ (${Math.round(sBox.x + sBox.width / 2)}, ${Math.round(sBox.y + sBox.height / 2)})...`);
+        await page.mouse.click(sBox.x + sBox.width / 2, sBox.y + sBox.height / 2);
+      } else {
+        await page.evaluate(el => el.click(), submitEl);
+      }
     }
-    await page.keyboard.press('Enter');
-    await sleep(2000);
+
+    // Gửi thêm tổ hợp phím Ctrl + Enter vào textarea để chắc chắn submit
+    try {
+      await page.evaluate(() => {
+        const ta = document.querySelector('textarea, [contenteditable="true"], [role="textbox"]');
+        if (ta) ta.focus();
+      });
+      await page.keyboard.down('Control');
+      await page.keyboard.press('Enter');
+      await page.keyboard.up('Control');
+    } catch (eKey) {}
+    await sleep(2500);
 
     // Kiểm tra xem đã bắt đầu sinh video chưa, nếu chưa bấm lại
-    for (let c = 0; c < 3; c++) {
+    let hasStarted = false;
+    for (let c = 0; c < 6; c++) {
       const isRunning = await page.evaluate(() => {
         const t = document.body.innerText || '';
         return t.includes('Đang tạo') || t.includes('Generating') || !!t.match(/(\d+)%/);
       });
-      if (isRunning) break;
-      if (submitEl) {
-        await page.evaluate(el => el && el.click(), submitEl);
+      if (isRunning) {
+        log('info', '🚀 Đã kích hoạt Google Vids AI bắt đầu tạo video thành công!');
+        hasStarted = true;
+        break;
       }
-      await page.keyboard.press('Enter');
-      await sleep(2000);
+      log('info', `🔄 Kích hoạt lại nút Tạo video AI (lần ${c + 1}/6)...`);
+      if (submitEl) {
+        const sBox = await submitEl.boundingBox();
+        if (sBox) await page.mouse.click(sBox.x + sBox.width / 2, sBox.y + sBox.height / 2);
+        else await page.evaluate(el => el && el.click(), submitEl);
+      }
+      try {
+        await page.keyboard.down('Control');
+        await page.keyboard.press('Enter');
+        await page.keyboard.up('Control');
+      } catch (eKey) {}
+      await sleep(2500);
+    }
+
+    if (!hasStarted) {
+      log('warning', '⚠️ Chưa thấy giao diện hiển thị trạng thái đang tạo, đã chụp ảnh kiểm tra.');
+      try {
+        await page.screenshot({ path: path.resolve('temp/vids_trigger_check.png') });
+      } catch (eSc) {}
     }
 
     log('info', '⏳ Đang chờ Google Vids sinh video (Omni 720p 9:16)...');
