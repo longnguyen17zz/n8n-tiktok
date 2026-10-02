@@ -335,9 +335,19 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
         // 3. Fallback: nạp qua input[type="file"]
         if (!uploaded) {
           try {
+            // Đóng menu popup nếu còn lơ lửng trên màn hình
+            await page.keyboard.press('Escape');
+            await sleep(600);
+
             const fileInputs = await page.$$('input[type="file"]');
             if (fileInputs.length > 0) {
-              await fileInputs[fileInputs.length - 1].uploadFile(slot.path);
+              const targetInput = fileInputs[fileInputs.length - 1];
+              // Xóa giá trị cũ để kích hoạt lại sự kiện change cho file tiếp theo (Background)
+              await page.evaluate(el => { if (el) el.value = ''; }, targetInput);
+              await targetInput.uploadFile(slot.path);
+              await page.evaluate(el => {
+                if (el) el.dispatchEvent(new Event('change', { bubbles: true }));
+              }, targetInput);
               log('info', `✅ Đã nạp [${slot.name}] qua input file fallback.`);
               await sleep(3500);
               uploaded = true;
