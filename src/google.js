@@ -229,45 +229,57 @@ export async function uploadVideoToDrive(filePath, fileName) {
   const oauthStatus = getOAuthStatus();
   if (oauthStatus.connected) {
     try {
+      console.log(`[Drive] 🚀 Đang tải video lên Google Drive qua tài khoản OAuth (${oauthStatus.email})...`);
       const fileId = await uploadVideoViaOAuth(filePath, fileName);
+      console.log(`[Drive] ✅ Đã tải video lên Google Drive thành công! File ID: ${fileId}`);
       return fileId;
     } catch (err) {
-      console.warn('OAuth Drive upload thất bại, thử qua Service Account:', err.message);
+      console.warn('⚠️ OAuth Drive upload thất bại, thử qua Service Account:', err.message);
+      if (err.message?.includes('storage quota') || err.message?.includes('quota')) {
+        throw err;
+      }
     }
   }
 
   // Ưu tiên 2: Fallback qua Service Account
-  const auth = getAuth();
-  const drive = google.drive({ version: 'v3', auth });
-  const fileMetadata = {
-    name: fileName,
-    parents: [CONFIG.DRIVE_OUTPUT_FOLDER_ID]
-  };
-  const media = {
-    mimeType: 'video/mp4',
-    body: fs.createReadStream(filePath)
-  };
-  const file = await drive.files.create({
-    resource: fileMetadata,
-    media: media,
-    supportsAllDrives: true,
-    fields: 'id, size'
-  });
-
-  const uploadedSize = parseInt(file.data?.size, 10);
-  if (!file.data?.size || isNaN(uploadedSize) || uploadedSize === 0) {
-    console.warn(`[WARN] Service Account upload Stream có size = 0, đang khắc phục bằng Buffer...`);
-    const buffer = fs.readFileSync(filePath);
-    const { Readable } = await import('stream');
-    await drive.files.update({
-      fileId: file.data.id,
-      media: {
-        mimeType: 'video/mp4',
-        body: Readable.from(buffer)
-      },
+  try {
+    const auth = getAuth();
+    const drive = google.drive({ version: 'v3', auth });
+    const fileMetadata = {
+      name: fileName,
+      parents: [CONFIG.DRIVE_OUTPUT_FOLDER_ID]
+    };
+    const media = {
+      mimeType: 'video/mp4',
+      body: fs.createReadStream(filePath)
+    };
+    const file = await drive.files.create({
+      resource: fileMetadata,
+      media: media,
+      supportsAllDrives: true,
       fields: 'id, size'
     });
-  }
 
-  return file.data.id;
+    const uploadedSize = parseInt(file.data?.size, 10);
+    if (!file.data?.size || isNaN(uploadedSize) || uploadedSize === 0) {
+      console.warn(`[WARN] Service Account upload Stream có size = 0, đang khắc phục bằng Buffer...`);
+      const buffer = fs.readFileSync(filePath);
+      const { Readable } = await import('stream');
+      await drive.files.update({
+        fileId: file.data.id,
+        media: {
+          mimeType: 'video/mp4',
+          body: Readable.from(buffer)
+        },
+        fields: 'id, size'
+      });
+    }
+
+    return file.data.id;
+  } catch (saErr) {
+    if (saErr.message?.includes('storage quota')) {
+      throw new Error(`Google Drive Service Account không có dung lượng lưu trữ (storage quota). Vui lòng kết nối tài khoản Google Drive (OAuth) trên giao diện để sử dụng dung lượng cá nhân.`);
+    }
+    throw saErr;
+  }
 }

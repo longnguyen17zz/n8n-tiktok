@@ -27,6 +27,7 @@ export const CONFIG = {
   ENGINE: process.env.ENGINE || 'vids',
   GOOGLE_SERVICE_ACCOUNT_JSON: process.env.GOOGLE_SERVICE_ACCOUNT_JSON,
   GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID || '',
+  GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET || '',
   GOOGLE_REDIRECT_URI: process.env.GOOGLE_REDIRECT_URI || `http://localhost:${process.env.PORT || 3005}/api/auth/google/callback`,
   PORT: parseInt(process.env.PORT, 10) || 3005,
   N8N_TIKTOK_WEBHOOK_URL: process.env.N8N_TIKTOK_WEBHOOK_URL || '',

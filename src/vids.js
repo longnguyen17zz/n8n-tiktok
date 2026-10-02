@@ -97,16 +97,29 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
     downloadPath: path.resolve(outputDir)
   });
 
-  // 1. Đón bắt mọi URL video qua mạng (Network response listener)
+  // 1. Đón bắt mọi URL video AI qua mạng (loại trừ tuyệt đối video tĩnh/hướng dẫn gstatic/dialog)
   const capturedNetworkVideos = [];
   page.on('response', async (response) => {
     try {
       const url = response.url();
+      const isStaticOrPromo = url.includes('gstatic.com') ||
+                              url.includes('gettingstarted') ||
+                              url.includes('entry_point') ||
+                              url.includes('promo') ||
+                              url.includes('tutorial') ||
+                              url.includes('sample') ||
+                              url.includes('slides_') ||
+                              url.includes('dialog');
+      if (isStaticOrPromo) return;
+
       const contentType = (response.headers()['content-type'] || '').toLowerCase();
+      const contentLength = parseInt(response.headers()['content-length'] || '0', 10);
+      if (contentLength > 0 && contentLength < 300000) return; // Bỏ qua file < 300KB
+
       if (contentType.includes('video/') || url.includes('.mp4') || url.includes('videoplayback') || url.includes('contribution-rt.usercontent.google.com')) {
-        if (!url.includes('promo') && !capturedNetworkVideos.includes(url)) {
+        if (!capturedNetworkVideos.includes(url)) {
           capturedNetworkVideos.push(url);
-          log('info', `🎥 Bắt được luồng video từ mạng: ${url.substring(0, 80)}...`);
+          log('info', `🎥 Bắt được luồng video AI từ mạng: ${url.substring(0, 80)}...`);
         }
       }
     } catch (e) {}
@@ -120,7 +133,7 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
       const url = origCreateObjectURL.apply(this, arguments);
       try {
         const isMediaSource = typeof MediaSource !== 'undefined' && obj instanceof MediaSource;
-        const isVideoBlob = obj && (obj.type?.includes('video') || (obj.size && obj.size > 150000));
+        const isVideoBlob = obj && (obj.type?.includes('video') || (obj.size && obj.size > 250000));
         if (isMediaSource || isVideoBlob) {
           window.__capturedBlobs.push({ url, size: obj?.size || 0, isMediaSource, time: Date.now() });
         }
@@ -600,30 +613,49 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
           const hasError = !!visibleError;
           const errorMsg = visibleError || null;
 
-          // Kiểm tra xem đã hoàn thành chưa (xuất hiện nút Chèn, Insert, Tạo lại, Regenerate)
-          const buttons = Array.from(document.querySelectorAll('button, div[role="button"], md-filled-button, [role="button"]'));
-          const hasChen = buttons.some(b => {
-            const t = (b.innerText || '').trim();
-            const a = (b.getAttribute('aria-label') || '').toLowerCase();
-            return t.includes('Chèn') || t.includes('Insert') || t.includes('Thêm') || a.includes('chèn') || a.includes('insert') || a.includes('thêm');
-          });
-          const hasTaoLai = buttons.some(b => {
-            const t = (b.innerText || '').trim();
-            const a = (b.getAttribute('aria-label') || '').toLowerCase();
-            return t.includes('Tạo lại') || t.includes('Regenerate') || t.includes('Tạo thêm') || a.includes('tạo lại');
+          // Helper kiểm tra URL không hợp lệ (video hướng dẫn, promo, static gstatic)
+          const isInvalidVideoSrc = (src) => {
+            if (!src || src.length <= 5) return true;
+            const lower = src.toLowerCase();
+            return lower.includes('gstatic.com') ||
+                   lower.includes('gettingstarted') ||
+                   lower.includes('entry_point') ||
+                   lower.includes('promo') ||
+                   lower.includes('tutorial') ||
+                   lower.includes('sample') ||
+                   lower.includes('slides_') ||
+                   lower.includes('dialog');
+          };
+
+          // Kiểm tra xem đã hoàn thành chưa (chỉ xét nút trong panel bên phải, tránh menu Chèn trên thanh menu bar)
+          const buttons = Array.from(document.querySelectorAll('button, div[role="button"], md-filled-button, [role="button"]')).filter(isVisible);
+          const panelButtons = buttons.filter(b => {
+            const r = b.getBoundingClientRect();
+            return r.top > 100 && r.left > window.innerWidth * 0.4 && r.left < window.innerWidth - 65;
           });
 
-          // LUÔN TÌM THẺ VIDEO HỢP LỆ TRÊN TRANG (không chặn bởi hasChen)
+          const hasChen = panelButtons.some(b => {
+            const t = (b.innerText || '').trim().toLowerCase();
+            const a = (b.getAttribute('aria-label') || '').toLowerCase();
+            return t.includes('chèn vào') || a.includes('chèn vào') || t.includes('insert into') || a.includes('insert into');
+          });
+          const hasTaoLai = panelButtons.some(b => {
+            const t = (b.innerText || '').trim().toLowerCase();
+            const a = (b.getAttribute('aria-label') || '').toLowerCase();
+            return t.includes('tạo lại') || a.includes('tạo lại') || t.includes('regenerate') || a.includes('regenerate');
+          });
+
+          // LUÔN TÌM THẺ VIDEO HỢP LỆ TRÊN TRANG (loại trừ video gstatic / promo)
           const vids = Array.from(document.querySelectorAll('video')).filter(isVisible);
           const genVideo = vids.find(v => {
             const s = v.currentSrc || v.src || (v.querySelector('source') ? v.querySelector('source').src : '') || '';
-            if (s.includes('video_gen_cartoon_avatar_promo')) return false;
+            if (isInvalidVideoSrc(s)) return false;
             return s.length > 5;
           });
           const foundSrc = genVideo ? (genVideo.currentSrc || genVideo.src || (genVideo.querySelector('source') ? genVideo.querySelector('source').src : null)) : null;
 
           // Tìm blob mới nhất từ window.__capturedBlobs
-          const captured = (window.__capturedBlobs || []).filter(b => b.url && !b.url.includes('promo'));
+          const captured = (window.__capturedBlobs || []).filter(b => b.url && !isInvalidVideoSrc(b.url));
           const latestBlob = captured.length > 0 ? captured[captured.length - 1].url : null;
 
           return {
@@ -632,7 +664,7 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
             percent,
             hasError,
             errorMsg,
-            hasChen: hasChen || hasTaoLai,
+            hasChen,
             hasTaoLai,
             videoCount: vids.length
           };
@@ -668,8 +700,11 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
         }
       }
 
+      // Điều kiện hoàn thành đáng tin cậy: Đạt 100% HOẶC có nút Chèn vào / Tạo lại sau ít nhất 16s tạo
+      const isComplete = (reach100Cycles >= 1) || ((status.hasChen || status.hasTaoLai) && i >= 4);
+
       // Ưu tiên 1: Lấy URL video bắt được từ mạng (CDP response listener)
-      if (capturedNetworkVideos.length > 0 && (reach100Cycles >= 1 || status.hasChen || status.hasTaoLai)) {
+      if (capturedNetworkVideos.length > 0 && isComplete) {
         videoSrc = capturedNetworkVideos[capturedNetworkVideos.length - 1];
         log('info', `🎉 Đã bắt được video trực tiếp từ mạng: ${videoSrc.substring(0, 80)}...`);
         break;
@@ -677,22 +712,26 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
 
       const activeSrc = status.src || status.latestBlob;
 
-      // Ưu tiên 2: Kết thúc ngay khi có nguồn video và đạt 100% hoặc có nút hoàn tất
-      if (activeSrc && (status.hasChen || status.hasTaoLai || reach100Cycles >= 1 || i >= 6)) {
+      // Ưu tiên 2: Kết thúc ngay khi có nguồn video và đã hoàn tất
+      if (activeSrc && isComplete) {
         videoSrc = activeSrc;
         log('info', `🎉 Google Vids đã hoàn thành video (${status.percent || '100%'})!`);
         break;
       }
 
       // Ưu tiên 3: Quét tìm thẻ video trong tất cả iframes
-      if (!videoSrc && (reach100Cycles >= 1 || i >= 8)) {
+      if (!videoSrc && (reach100Cycles >= 1 || (isComplete && i >= 8))) {
         for (const frame of page.frames()) {
           try {
             const fVids = await frame.evaluate(() => {
               const vs = Array.from(document.querySelectorAll('video'));
               return vs.map(v => v.currentSrc || v.src || v.querySelector('source')?.src).filter(Boolean);
             });
-            const valid = fVids.find(s => !s.includes('promo') && s.length > 5);
+            const valid = fVids.find(s => {
+              if (!s || s.length <= 5) return false;
+              const lower = s.toLowerCase();
+              return !lower.includes('gstatic.com') && !lower.includes('promo') && !lower.includes('tutorial');
+            });
             if (valid) {
               videoSrc = valid;
               log('info', `🎉 Tìm thấy thẻ video trong iframe: ${videoSrc}`);
@@ -712,12 +751,13 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
           const thumbs = Array.from(document.querySelectorAll('[class*="Successfulvideogeneration"], [class*="thumbnail"], [class*="Thumbnail"]'));
           thumbs.forEach(t => { try { t.click(); } catch (e) {} });
 
-          // Click nút Chèn / Thêm
+          // Click nút Chèn vào video / Chèn vào timeline
           const all = Array.from(document.querySelectorAll('button, div[role="button"], md-filled-button, [role="button"]'));
           const btn = all.find(b => {
-            const t = (b.innerText || '').trim();
+            const t = (b.innerText || '').trim().toLowerCase();
             const a = (b.getAttribute('aria-label') || '').toLowerCase();
-            return t.includes('Chèn') || t.includes('Insert') || t.includes('Thêm') || a.includes('chèn') || a.includes('insert');
+            return t.includes('chèn vào') || a.includes('chèn vào') || t.includes('insert into') || a.includes('insert into') ||
+                   t === 'chèn' || a === 'chèn';
           });
           if (btn) btn.click();
         });
@@ -735,7 +775,8 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
           const vids = Array.from(document.querySelectorAll('video'));
           const gen = vids.find(v => {
             const s = v.currentSrc || v.src || (v.querySelector('source') ? v.querySelector('source').src : '') || '';
-            return s && !s.includes('promo') && s.length > 5;
+            const lower = s.toLowerCase();
+            return s && !lower.includes('gstatic.com') && !lower.includes('promo') && !lower.includes('gettingstarted') && s.length > 5;
           });
           return gen ? (gen.currentSrc || gen.src || (gen.querySelector('source') ? gen.querySelector('source').src : null)) : null;
         });
@@ -748,7 +789,11 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
 
         // Kiểm tra lại capturedBlobs
         const retryBlob = await page.evaluate(() => {
-          const captured = (window.__capturedBlobs || []).filter(b => b.url && !b.url.includes('promo'));
+          const captured = (window.__capturedBlobs || []).filter(b => {
+            if (!b.url) return false;
+            const lower = b.url.toLowerCase();
+            return !lower.includes('promo') && !lower.includes('gstatic.com');
+          });
           return captured.length > 0 ? captured[captured.length - 1].url : null;
         });
         if (retryBlob) {
@@ -788,11 +833,13 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
           },
           timeout: 60000
         });
-        if (resp.data && resp.data.byteLength > 50000) {
+        if (resp.data && resp.data.byteLength > 300000) {
           const filename = `vids_${Date.now()}.mp4`;
           downloadedFile = path.join(outputDir, filename);
           fs.writeFileSync(downloadedFile, Buffer.from(resp.data));
           log('info', `🎉 Đã lưu video thành công từ CDN: ${downloadedFile} (${(resp.data.byteLength / 1024 / 1024).toFixed(2)} MB)`);
+        } else {
+          log('warning', `⚠️ Video từ CDN có dung lượng quá nhỏ (${resp.data?.byteLength || 0} bytes), bỏ qua để trích xuất blob thực...`);
         }
       } catch (httpErr) {
         log('warning', `Tải video từ CDN thất bại: ${httpErr.message}, tiếp tục thử trích xuất blob...`);
@@ -800,7 +847,7 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
     }
 
     // Cách 1: Nếu là blob URL, trích xuất trực tiếp buffer từ trình duyệt bằng fetch
-    if (videoSrc && videoSrc.startsWith('blob:')) {
+    if (!downloadedFile && videoSrc && videoSrc.startsWith('blob:')) {
       try {
         log('info', '📥 Đang trích xuất dữ liệu video MP4 từ trình duyệt (blob stream)...');
         const base64Data = await page.evaluate(async (url) => {
@@ -815,11 +862,13 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
 
         if (base64Data && base64Data.includes(',')) {
           const buffer = Buffer.from(base64Data.split(',')[1], 'base64');
-          if (buffer.length > 50000) {
+          if (buffer.length > 300000) {
             const filename = `vids_${Date.now()}.mp4`;
             downloadedFile = path.join(outputDir, filename);
             fs.writeFileSync(downloadedFile, buffer);
             log('info', `🎉 Đã lưu video thành công: ${downloadedFile} (${(buffer.length / 1024 / 1024).toFixed(2)} MB)`);
+          } else {
+            log('warning', `⚠️ Video blob có dung lượng quá nhỏ (${buffer.length} bytes), bỏ qua...`);
           }
         }
       } catch (blobErr) {
