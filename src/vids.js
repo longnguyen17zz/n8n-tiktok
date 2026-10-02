@@ -287,109 +287,98 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
     }
 
     if (slots.length > 0) {
-      log('info', `🖼️ Đang nạp ${slots.length} ảnh nguyên liệu vào Google Vids: ${slots.map(s => s.name).join(' + ')}...`);
+      // Google Vids panel "Tạo" chỉ nhận TỐI ĐA 3 ảnh tham chiếu (theo đúng tooltip của chính
+      // Google: "Thêm tối đa 3 hình ảnh để dùng"), và quan trọng nhất: chọn NHIỀU FILE CÙNG LÚC
+      // qua 1 input (dù có set multiple) chỉ giữ lại ĐÚNG 1 ẢNH ĐẦU TIÊN — đã kiểm chứng trực tiếp
+      // nhiều lần. Cách duy nhất nạp được nhiều ảnh là nạp ẢNH ĐẦU TIÊN qua input có sẵn, sau đó
+      // bấm "+ Thêm" TUẦN TỰ cho từng ảnh còn lại — mỗi lần bấm "+ Thêm" sẽ mở 1 menu nhỏ (không
+      // phải hộp thoại Mở tệp lớn) với 2 mục "Hình đại diện" / "Tải lên"; bấm đúng mục "Tải lên"
+      // trong menu nhỏ đó (giới hạn tìm kiếm trong menu, KHÔNG tìm toàn trang — toàn trang có nhiều
+      // phần tử trùng chữ "Tải lên" ở nơi khác, ví dụ icon "Tải lên" trên sidebar chính, bấm nhầm
+      // vào đó sẽ đóng mất panel AI đang mở) rồi dùng page.waitForFileChooser() để bắt đúng hộp
+      // thoại chọn file hệ thống mà trình duyệt mở ra — đây là cách Puppeteer chính thức xử lý file
+      // picker, không phải tự dò input[type=file] trong DOM (vốn không tồn tại ở bước này).
+      const usedSlots = slots.slice(0, 3);
+      log('info', `🖼️ Đang nạp ${usedSlots.length} ảnh nguyên liệu vào Google Vids: ${usedSlots.map(s => s.name).join(' + ')}...`);
 
-      // 1. Thử nạp đồng thời toàn bộ ảnh vào input[type="file"] có sẵn trên trang
-      let allBatchUploaded = false;
+      // 1. Nạp ảnh ĐẦU TIÊN qua input[type="file"] có sẵn trên trang
+      let firstUploaded = false;
       try {
         const fileInputs = await page.$$('input[type="file"]');
         if (fileInputs.length > 0) {
           const targetInput = fileInputs[fileInputs.length - 1];
-          await page.evaluate(el => {
-            if (el) {
-              el.setAttribute('multiple', '');
-              el.multiple = true;
-            }
-          }, targetInput);
-          const allPaths = slots.map(s => s.path);
-          await targetInput.uploadFile(...allPaths);
+          await targetInput.uploadFile(usedSlots[0].path);
           await page.evaluate(el => {
             if (el) el.dispatchEvent(new Event('change', { bubbles: true }));
           }, targetInput);
-          log('info', `✅ Đã nạp batch ${allPaths.length} ảnh nguyên liệu vào Google Vids!`);
-          await sleep(3500);
-          allBatchUploaded = true;
+          log('info', `✅ Đã nạp [${usedSlots[0].name}] (ảnh 1/${usedSlots.length})`);
+          await sleep(3000);
+          firstUploaded = true;
         }
-      } catch (eBatch) {}
+      } catch (eFirst) {
+        log('warning', `⚠️ Lỗi nạp ảnh đầu tiên: ${eFirst.message}`);
+      }
 
-      // 2. Nạp từng file còn lại qua nút "+ Thêm" trên giao diện (hỗ trợ cả iframe Google Picker)
-      // CHỈ chạy khi batch upload ở bước 1 thất bại — nếu đã thành công thì KHÔNG thử lại nữa,
-      // vì nút "+ Thêm" dùng để thêm ảnh tham chiếu MỚI (không phải nạp lại ảnh đã có), và việc
-      // dò DOM xem "đã nạp hay chưa" không đáng tin cậy (UI dùng web component, không phải <div> thường)
-      // nên từng khiến code bấm nhầm +Thêm, mở picker thừa và phá vỡ toàn bộ luồng sau đó.
-      for (let i = 0; i < slots.length && !allBatchUploaded; i++) {
-        const slot = slots[i];
-
-        log('info', `📸 Đang tải [${slot.name}]: ${path.basename(slot.path)}...`);
-        let uploaded = false;
-
-        // Thử tìm nút "+ Thêm" dạng khung nét đứt cạnh ảnh đã nạp
+      // 2. Nạp TUẦN TỰ từng ảnh còn lại qua "+ Thêm" -> menu nhỏ -> "Tải lên" -> file chooser thật
+      for (let i = 1; i < usedSlots.length && firstUploaded; i++) {
+        const slot = usedSlots[i];
+        log('info', `📸 Đang nạp [${slot.name}] (ảnh ${i + 1}/${usedSlots.length}) qua "+ Thêm"...`);
         try {
           const addBtnHandle = await page.evaluateHandle(() => {
             const all = Array.from(document.querySelectorAll('button, div[role="button"], div'));
             return all.find(e => {
               const t = (e.innerText || '').trim();
               const rect = e.getBoundingClientRect();
-              return (t === '+ Thêm' || t === 'Thêm' || (e.getAttribute('aria-label') || '').includes('Thêm')) && 
+              return (t === '+ Thêm' || t === 'Thêm') &&
                      rect.width > 20 && rect.height > 20 && rect.top > window.innerHeight * 0.4 &&
                      rect.left < window.innerWidth - 65; // Tránh nhầm với rail sidebar bên phải
             }) || null;
           });
-
           const addBtn = addBtnHandle.asElement();
-          if (addBtn) {
-            await page.evaluate(el => el && el.click(), addBtn);
-            await sleep(1800);
-
-            // Tìm và click tab "Tải lên" / "Máy tính" / "Upload" trên TẤT CẢ các frame (bao gồm iframe Google Picker)
-            const allFrames = [page.mainFrame(), ...page.frames().filter(f => f !== page.mainFrame())];
-            for (const frame of allFrames) {
-              try {
-                await frame.evaluate(() => {
-                  const elements = Array.from(document.querySelectorAll('div, span, button, [role="tab"], a'));
-                  const uploadTab = elements.find(e => {
-                    const t = (e.innerText || '').trim();
-                    return t === 'Tải lên' || t === 'Máy tính' || t === 'Upload';
-                  });
-                  if (uploadTab) uploadTab.click();
-                });
-              } catch (e) {}
-            }
-            await sleep(1500);
-
-            // Tìm input file trong TẤT CẢ các frame để nạp file
-            for (const frame of allFrames) {
-              try {
-                const fInputs = await frame.$$('input[type="file"]');
-                if (fInputs.length > 0) {
-                  const targetInput = fInputs[fInputs.length - 1];
-                  await targetInput.uploadFile(slot.path);
-                  try {
-                    await frame.evaluate(el => {
-                      if (el) el.dispatchEvent(new Event('change', { bubbles: true }));
-                    }, targetInput);
-                  } catch (e) {}
-                  log('info', `✅ Đã nạp thành công [${slot.name}] qua hộp thoại Mở tệp!`);
-                  await sleep(3500);
-                  uploaded = true;
-                  break;
-                }
-              } catch (e) {}
-            }
+          if (!addBtn) {
+            log('warning', `⚠️ Không tìm thấy nút "+ Thêm" để nạp [${slot.name}], bỏ qua.`);
+            continue;
           }
-        } catch (eAdd) {}
+          const addBox = await addBtn.boundingBox();
+          await page.mouse.click(addBox.x + addBox.width / 2, addBox.y + addBox.height / 2);
+          await sleep(1000);
 
-        // Đóng modal Mở tệp nếu còn mở (CHỈ bấm nút đóng của chính hộp thoại Mở tệp bằng
-        // khớp chính xác aria-label, KHÔNG dùng phím Escape ở đây vì có thể vô tình đóng
-        // luôn panel "Đoạn video do AI tạo" đang mở phía sau)
-        await page.evaluate(() => {
-          const closeBtns = Array.from(document.querySelectorAll('button[aria-label="Đóng"], button[aria-label="Close"], .picker-dialog-close'));
-          closeBtns.forEach(b => { try { b.click(); } catch (e) {} });
-        });
-        await sleep(800);
+          // Tìm mục "Tải lên" CHỈ TRONG menu nhỏ vừa mở (container cha cũng chứa "Hình đại diện",
+          // kích thước nhỏ) — tuyệt đối không tìm "Tải lên" trên toàn trang.
+          const uploadItemHandle = await page.evaluateHandle(() => {
+            const candidates = Array.from(document.querySelectorAll('*')).filter(e =>
+              (e.innerText || '').trim() === 'Tải lên' && e.children.length <= 2
+            );
+            for (const el of candidates) {
+              let p = el.parentElement;
+              for (let d = 0; d < 3 && p; d++) {
+                const txt = p.innerText || '';
+                const r = p.getBoundingClientRect();
+                if (txt.includes('Hình đại diện') && txt.includes('Tải lên') && r.width < 350 && r.height < 200) {
+                  return el;
+                }
+                p = p.parentElement;
+              }
+            }
+            return null;
+          });
+          const uploadItemEl = uploadItemHandle.asElement();
+          if (!uploadItemEl) {
+            log('warning', `⚠️ Không tìm thấy mục "Tải lên" trong menu, bỏ qua [${slot.name}].`);
+            await page.keyboard.press('Escape');
+            continue;
+          }
+          const upBox = await uploadItemEl.boundingBox();
 
-        if (!uploaded && i > 0) {
-          log('info', `ℹ️ Đã hoàn tất nạp mẫu chính, tiếp tục quá trình tạo video.`);
+          const [fileChooser] = await Promise.all([
+            page.waitForFileChooser({ timeout: 8000 }),
+            page.mouse.click(upBox.x + upBox.width / 2, upBox.y + upBox.height / 2)
+          ]);
+          await fileChooser.accept([slot.path]);
+          log('info', `✅ Đã nạp thành công [${slot.name}] (ảnh ${i + 1}/${usedSlots.length})`);
+          await sleep(3000);
+        } catch (eAdd) {
+          log('warning', `⚠️ Lỗi nạp [${slot.name}]: ${eAdd.message}`);
         }
       }
 
