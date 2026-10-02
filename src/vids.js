@@ -97,15 +97,32 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
     downloadPath: path.resolve(outputDir)
   });
 
-  // Đón bắt mọi blob video được khởi tạo trong trình duyệt
+  // 1. Đón bắt mọi URL video qua mạng (Network response listener)
+  const capturedNetworkVideos = [];
+  page.on('response', async (response) => {
+    try {
+      const url = response.url();
+      const contentType = (response.headers()['content-type'] || '').toLowerCase();
+      if (contentType.includes('video/') || url.includes('.mp4') || url.includes('videoplayback') || url.includes('contribution-rt.usercontent.google.com')) {
+        if (!url.includes('promo') && !capturedNetworkVideos.includes(url)) {
+          capturedNetworkVideos.push(url);
+          log('info', `🎥 Bắt được luồng video từ mạng: ${url.substring(0, 80)}...`);
+        }
+      }
+    } catch (e) {}
+  });
+
+  // 2. Đón bắt mọi blob video được khởi tạo trong trình duyệt (hỗ trợ cả MediaSource)
   await page.evaluateOnNewDocument(() => {
     window.__capturedBlobs = [];
     const origCreateObjectURL = URL.createObjectURL;
     URL.createObjectURL = function(obj) {
       const url = origCreateObjectURL.apply(this, arguments);
       try {
-        if (obj && (obj.type?.includes('video') || (obj.size && obj.size > 200000))) {
-          window.__capturedBlobs.push({ url, size: obj.size, type: obj.type, time: Date.now() });
+        const isMediaSource = typeof MediaSource !== 'undefined' && obj instanceof MediaSource;
+        const isVideoBlob = obj && (obj.type?.includes('video') || (obj.size && obj.size > 150000));
+        if (isMediaSource || isVideoBlob) {
+          window.__capturedBlobs.push({ url, size: obj?.size || 0, isMediaSource, time: Date.now() });
         }
       } catch (e) {}
       return url;
@@ -643,22 +660,59 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
       // Theo dõi số chu kỳ đạt 100%
       if (status.percent === '100%') {
         reach100Cycles++;
+        if (reach100Cycles === 1) {
+          try {
+            await page.screenshot({ path: path.resolve('temp/vids_100_percent.png') });
+            log('info', '📸 Đã chụp ảnh giao diện tại mốc 100% (temp/vids_100_percent.png)');
+          } catch (eSc) {}
+        }
+      }
+
+      // Ưu tiên 1: Lấy URL video bắt được từ mạng (CDP response listener)
+      if (capturedNetworkVideos.length > 0 && (reach100Cycles >= 1 || status.hasChen || status.hasTaoLai)) {
+        videoSrc = capturedNetworkVideos[capturedNetworkVideos.length - 1];
+        log('info', `🎉 Đã bắt được video trực tiếp từ mạng: ${videoSrc.substring(0, 80)}...`);
+        break;
       }
 
       const activeSrc = status.src || status.latestBlob;
 
-      // 1. KẾT THÚC NGAY KHI ĐÃ CÓ NGUỒN VIDEO VÀ ĐẠT 100% HOẶC CÓ NÚT HOÀN TẤT:
+      // Ưu tiên 2: Kết thúc ngay khi có nguồn video và đạt 100% hoặc có nút hoàn tất
       if (activeSrc && (status.hasChen || status.hasTaoLai || reach100Cycles >= 1 || i >= 6)) {
         videoSrc = activeSrc;
         log('info', `🎉 Google Vids đã hoàn thành video (${status.percent || '100%'})!`);
         break;
       }
 
-      // 2. Nếu đạt 100% từ 2 chu kỳ trở lên (>= 8s) mà chưa bắt được activeSrc:
-      // Tự động bấm nút Chèn / Thêm để chèn video vào dòng thời gian
+      // Ưu tiên 3: Quét tìm thẻ video trong tất cả iframes
+      if (!videoSrc && (reach100Cycles >= 1 || i >= 8)) {
+        for (const frame of page.frames()) {
+          try {
+            const fVids = await frame.evaluate(() => {
+              const vs = Array.from(document.querySelectorAll('video'));
+              return vs.map(v => v.currentSrc || v.src || v.querySelector('source')?.src).filter(Boolean);
+            });
+            const valid = fVids.find(s => !s.includes('promo') && s.length > 5);
+            if (valid) {
+              videoSrc = valid;
+              log('info', `🎉 Tìm thấy thẻ video trong iframe: ${videoSrc}`);
+              break;
+            }
+          } catch (e) {}
+        }
+        if (videoSrc) break;
+      }
+
+      // Ưu tiên 4: Nếu đạt 100% từ 2 chu kỳ trở lên (>= 8s) mà chưa bắt được video:
+      // Tự động click thumbnail video hoặc nút Chèn / Thêm để đưa video vào timeline
       if (reach100Cycles >= 2 && !videoSrc) {
         log('info', '🎬 Video đạt 100%, đang chèn video vào dòng thời gian để trích xuất...');
         await page.evaluate(() => {
+          // Click thumbnail để kích hoạt player
+          const thumbs = Array.from(document.querySelectorAll('[class*="Successfulvideogeneration"], [class*="thumbnail"], [class*="Thumbnail"]'));
+          thumbs.forEach(t => { try { t.click(); } catch (e) {} });
+
+          // Click nút Chèn / Thêm
           const all = Array.from(document.querySelectorAll('button, div[role="button"], md-filled-button, [role="button"]'));
           const btn = all.find(b => {
             const t = (b.innerText || '').trim();
@@ -668,6 +722,13 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
           if (btn) btn.click();
         });
         await sleep(2500);
+
+        // Kiểm tra lại capturedNetworkVideos
+        if (capturedNetworkVideos.length > 0) {
+          videoSrc = capturedNetworkVideos[capturedNetworkVideos.length - 1];
+          log('info', `🎉 Đã bắt được video từ mạng sau khi chèn: ${videoSrc.substring(0, 80)}...`);
+          break;
+        }
 
         // Quét lại toàn bộ thẻ video trên trang
         const insertedSrc = await page.evaluate(() => {
@@ -702,7 +763,8 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
       try {
         const debugPath = path.resolve('temp/vids_timeout_debug.png');
         fs.mkdirSync(path.dirname(debugPath), { recursive: true });
-        await page.screenshot({ path: debugPath, fullPage: true });
+        // KHÔNG dùng fullPage: true để tránh màn hình bị trắng xóa trên ứng dụng canvas Docs
+        await page.screenshot({ path: debugPath });
         log('warning', `📸 Đã lưu ảnh chụp màn hình debug tại: ${debugPath}`);
       } catch (ssErr) {}
       throw new Error('Hết thời gian chờ Google Vids tạo video (quá 8 phút).');
@@ -711,6 +773,31 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
     // 7. Tải video MP4 về máy tính
     log('info', '💾 Đang tải video MP4 về máy tính...');
     let downloadedFile = null;
+
+    // Cách 0: Nếu là URL mạng HTTP/HTTPS (từ Google Video CDN), tải trực tiếp bằng Axios
+    if (videoSrc && videoSrc.startsWith('http')) {
+      try {
+        log('info', '📥 Đang tải video trực tiếp từ Google CDN...');
+        const cookies = await page.cookies();
+        const cookieHeader = cookies.map(c => `${c.name}=${c.value}`).join('; ');
+        const resp = await axios.get(videoSrc, {
+          responseType: 'arraybuffer',
+          headers: {
+            'Cookie': cookieHeader,
+            'User-Agent': await page.evaluate(() => navigator.userAgent)
+          },
+          timeout: 60000
+        });
+        if (resp.data && resp.data.byteLength > 50000) {
+          const filename = `vids_${Date.now()}.mp4`;
+          downloadedFile = path.join(outputDir, filename);
+          fs.writeFileSync(downloadedFile, Buffer.from(resp.data));
+          log('info', `🎉 Đã lưu video thành công từ CDN: ${downloadedFile} (${(resp.data.byteLength / 1024 / 1024).toFixed(2)} MB)`);
+        }
+      } catch (httpErr) {
+        log('warning', `Tải video từ CDN thất bại: ${httpErr.message}, tiếp tục thử trích xuất blob...`);
+      }
+    }
 
     // Cách 1: Nếu là blob URL, trích xuất trực tiếp buffer từ trình duyệt bằng fetch
     if (videoSrc && videoSrc.startsWith('blob:')) {
