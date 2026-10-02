@@ -109,7 +109,20 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
     }
 
     log('info', `📄 Đã vào trang Google Vids editor: ${page.url()}`);
-    await sleep(4000);
+    await sleep(3000);
+
+    // Đóng bất kỳ modal / popup còn sót lại (như "Huỷ tạo hình đại diện?", "Chọn hình đại diện")
+    await page.evaluate(() => {
+      const allBtns = Array.from(document.querySelectorAll('button, div[role="button"]'));
+      const closeBtn = allBtns.find(b => {
+        const t = (b.innerText || '').trim();
+        const aria = (b.getAttribute('aria-label') || '').trim();
+        return t === 'Huỷ' || t === 'Đóng' || aria === 'Đóng' || aria === 'Huỷ';
+      });
+      if (closeBtn) closeBtn.click();
+    });
+    await page.keyboard.press('Escape');
+    await sleep(800);
 
     // 2. Chọn định dạng video dọc (Dọc 9:16)
     log('info', '📱 Chọn định dạng video dọc (9:16)...');
@@ -128,105 +141,54 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
     });
     await sleep(2500);
 
-    // 4. Phân loại và nạp ảnh nguyên liệu theo đúng slot trong Google Vids:
-    // - MẪU ẢNH (avatar) -> Nạp vào "Hình đại diện" (Avatar) để AI dùng đúng mặt người mẫu làm nhân vật chính
-    // - SẢN PHẨM (product) -> Nạp vào "Thành phần" (Components) để người mẫu cầm đúng sản phẩm trên tay
-    // - BACKGROUND (background) -> Nạp bổ sung vào "Thành phần"
+    // 4. Nạp tất cả ảnh nguyên liệu (Mẫu ảnh, Sản phẩm, Background) vào Thành phần của Video AI:
     const slots = [];
     if (avatarPath && fs.existsSync(avatarPath)) {
-      slots.push({ path: path.resolve(avatarPath), type: 'avatar', name: 'Mẫu ảnh (Hình đại diện)' });
+      slots.push({ path: path.resolve(avatarPath), name: 'Mẫu ảnh (Chân dung)' });
     }
     if (productPath && fs.existsSync(productPath)) {
-      slots.push({ path: path.resolve(productPath), type: 'component', name: 'Sản phẩm (Thành phần)' });
+      slots.push({ path: path.resolve(productPath), name: 'Sản phẩm' });
     }
     if (backgroundPath && fs.existsSync(backgroundPath)) {
-      slots.push({ path: path.resolve(backgroundPath), type: 'component', name: 'Background (Thành phần)' });
+      slots.push({ path: path.resolve(backgroundPath), name: 'Background' });
     }
 
-    // Fallback nếu người dùng truyền danh sách imagePaths truyền thống
     if (slots.length === 0 && imagePaths && imagePaths.length > 0) {
       const validImages = imagePaths.filter(img => img && fs.existsSync(img));
       validImages.forEach((img, idx) => {
-        const isAvatar = path.basename(img).includes('mau_anh') || idx === 1;
         slots.push({
           path: path.resolve(img),
-          type: isAvatar ? 'avatar' : 'component',
-          name: isAvatar ? 'Mẫu ảnh (Hình đại diện)' : 'Sản phẩm (Thành phần)'
+          name: idx === 0 ? 'Mẫu ảnh' : (idx === 1 ? 'Sản phẩm' : `Nguyên liệu #${idx + 1}`)
         });
       });
-      // Ưu tiên nạp avatar vào Hình đại diện trước
-      slots.sort((a, b) => (a.type === 'avatar' ? -1 : 1));
     }
 
     if (slots.length > 0) {
       log('info', `🖼️ Đang nạp ${slots.length} ảnh nguyên liệu vào Google Vids: ${slots.map(s => s.name).join(' + ')}...`);
-
-      // Đảm bảo tab "Tạo" đang được chọn một lần duy nhất trước khi nạp ảnh
-      await page.evaluate(() => {
-        const tabs = Array.from(document.querySelectorAll('button, div[role="button"], div[role="tab"]'));
-        const taoTab = tabs.find(t => (t.innerText || '').trim() === 'Tạo');
-        if (taoTab && !taoTab.className.includes('Selected')) {
-          taoTab.click();
-        }
-      });
-      await sleep(1000);
 
       for (let i = 0; i < slots.length; i++) {
         const slot = slots[i];
         log('info', `📸 Đang tải [${slot.name}]: ${path.basename(slot.path)}...`);
 
         let uploaded = false;
-        const isAvatarSlot = slot.type === 'avatar';
 
-        // 1. Thử click trực tiếp vào nút slot hiển thị trên khung tạo (nếu có ô trống "Hình đại diện" hoặc "Thành phần")
+        // 1. Thử nạp qua thẻ input[type="file"] trực tiếp
         try {
-          const slotBtnHandle = await page.evaluateHandle((isAvatar) => {
-            const isVisible = (el) => {
-              if (!el) return false;
-              const style = window.getComputedStyle(el);
-              if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
-              const rect = el.getBoundingClientRect();
-              return rect.width > 0 && rect.height > 0;
-            };
-
-            const scope = document.querySelector('.videoGenCreationView, [role="dialog"], .collapsiblePromptBox') || document.body;
-            const candidates = Array.from(scope.querySelectorAll('button, div[role="button"], [tabindex="0"]')).filter(isVisible);
-
-            const btn = candidates.find(e => {
-              const txt = (e.innerText || '').trim().toLowerCase();
-              const aria = (e.getAttribute('aria-label') || '').trim().toLowerCase();
-              if (isAvatar) {
-                return (txt.includes('hình đại diện') || aria.includes('hình đại diện') || txt === 'avatar') && !txt.includes('chọn');
-              } else {
-                return txt.includes('thành phần') || aria.includes('thành phần');
-              }
-            });
-            return btn || null;
-          }, isAvatarSlot);
-
-          const slotBtn = slotBtnHandle.asElement();
-          if (slotBtn) {
-            const fcPromise = page.waitForFileChooser({ timeout: 4000 }).catch(() => null);
+          const fileInputs = await page.$$('input[type="file"]');
+          if (fileInputs.length > 0) {
+            const targetInput = fileInputs[fileInputs.length - 1];
+            await page.evaluate(el => { if (el) el.value = ''; }, targetInput);
+            await targetInput.uploadFile(slot.path);
             await page.evaluate(el => {
-              if (el) {
-                el.scrollIntoView({ behavior: 'instant', block: 'center' });
-                el.click();
-              }
-            }, slotBtn);
-
-            const fc = await fcPromise;
-            if (fc) {
-              await fc.accept([slot.path]);
-              log('info', `✅ Đã nạp thành công [${slot.name}] vào đúng ô trên giao diện!`);
-              await sleep(3000);
-              uploaded = true;
-            }
+              if (el) el.dispatchEvent(new Event('change', { bubbles: true }));
+            }, targetInput);
+            log('info', `✅ Đã nạp thành công [${slot.name}] vào nguyên liệu AI!`);
+            await sleep(3000);
+            uploaded = true;
           }
-        } catch (e1) {
-          // Bỏ qua và chuyển sang bước 2
-        }
+        } catch (e1) {}
 
-        // 2. Nếu chưa nạp được, bấm nút "+ Thêm" (Thêm hình đại diện hoặc thành phần)
+        // 2. Nếu cách 1 chưa ăn, bấm nút "+ Thêm" / "Thành phần" trên khung prompt
         if (!uploaded) {
           try {
             const addBtnHandle = await page.evaluateHandle(() => {
@@ -246,127 +208,41 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
               return buttons.find(e => {
                 const aria = (e.getAttribute('aria-label') || '').toLowerCase();
                 const txt = (e.innerText || '').toLowerCase();
-                return aria.includes('thêm') || txt.includes('thêm') || aria.includes('add') || txt.includes('add');
+                return aria.includes('thêm') || txt.includes('thêm') || aria.includes('thành phần') || txt.includes('thành phần');
               }) || null;
             });
 
             const addBtn = addBtnHandle.asElement();
             if (addBtn) {
-              await page.evaluate(el => {
-                if (el) {
-                  el.scrollIntoView({ behavior: 'instant', block: 'center' });
-                  el.click();
-                }
-              }, addBtn);
-              await sleep(1200);
+              const fcPromise = page.waitForFileChooser({ timeout: 5000 }).catch(() => null);
+              await page.evaluate(el => { if (el) el.click(); }, addBtn);
+              await sleep(1000);
 
-              // Menu popup xổ ra: chọn "Hình đại diện" hoặc "Thành phần" tương ứng
-              const menuItemHandle = await page.evaluateHandle((isAvatar) => {
-                const isVisible = (el) => {
-                  if (!el) return false;
-                  const style = window.getComputedStyle(el);
-                  if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
-                  const rect = el.getBoundingClientRect();
-                  return rect.width > 0 && rect.height > 0;
-                };
-
-                const allItems = Array.from(document.querySelectorAll('[role="menuitem"], [role="option"], button, div[role="button"], span, div')).filter(isVisible);
-                let target = allItems.find(e => {
-                  const txt = (e.innerText || '').trim().toLowerCase();
-                  const aria = (e.getAttribute('aria-label') || '').trim().toLowerCase();
-                  if (isAvatar) {
-                    return (txt.includes('hình đại diện') || aria.includes('hình đại diện') || txt.includes('avatar')) && !txt.includes('thêm');
-                  }
-                  return (txt.includes('thành phần') || aria.includes('thành phần') || txt.includes('element')) && !txt.includes('thêm');
+              // Bấm chọn "Thành phần" hoặc "Tải lên" trong menu nếu có
+              await page.evaluate(() => {
+                const items = Array.from(document.querySelectorAll('[role="menuitem"], button, div[role="button"]'));
+                const target = items.find(e => {
+                  const t = (e.innerText || '').trim().toLowerCase();
+                  return t.includes('thành phần') || t.includes('tải lên') || t.includes('máy tính');
                 });
+                if (target) target.click();
+              });
 
-                if (!target) {
-                  target = allItems.find(e => {
-                    const txt = (e.innerText || '').trim().toLowerCase();
-                    return txt.includes('tải lên') || txt.includes('upload') || txt.includes('tệp') || txt.includes('máy tính');
-                  });
-                }
-                return target ? (target.closest('[role="menuitem"], [role="option"], button, div[role="button"]') || target) : null;
-              }, isAvatarSlot);
-
-              const menuItem = menuItemHandle.asElement();
-              if (menuItem) {
-                const fcPromise = page.waitForFileChooser({ timeout: 5000 }).catch(() => null);
-                await page.evaluate(el => {
-                  if (el) {
-                    el.scrollIntoView({ behavior: 'instant', block: 'center' });
-                    el.click();
-                  }
-                }, menuItem);
-
-                let fc = await fcPromise;
-
-                // Nếu click vào mục menu lại mở tiếp 1 menu con có chữ "Tải lên" / "Từ máy tính"
-                if (!fc) {
-                  await sleep(800);
-                  const subItemHandle = await page.evaluateHandle(() => {
-                    const all = Array.from(document.querySelectorAll('[role="menuitem"], button, div[role="button"]'));
-                    return all.find(e => {
-                      const txt = (e.innerText || '').trim().toLowerCase();
-                      return txt.includes('tải lên') || txt.includes('máy tính') || txt.includes('upload');
-                    }) || null;
-                  });
-                  const subItem = subItemHandle.asElement();
-                  if (subItem) {
-                    const subFcPromise = page.waitForFileChooser({ timeout: 5000 }).catch(() => null);
-                    await page.evaluate(el => el && el.click(), subItem);
-                    fc = await subFcPromise;
-                  }
-                }
-
-                if (fc) {
-                  await fc.accept([slot.path]);
-                  log('info', `✅ Đã nạp thành công [${slot.name}] qua menu Thêm!`);
-                  await sleep(3500);
-                  uploaded = true;
-                }
+              const fc = await fcPromise;
+              if (fc) {
+                await fc.accept([slot.path]);
+                log('info', `✅ Đã nạp thành công [${slot.name}] qua menu đính kèm!`);
+                await sleep(3500);
+                uploaded = true;
               }
             }
-          } catch (e2) {
-            // Bỏ qua và chuyển sang fallback input[type="file"]
-          }
+          } catch (e2) {}
         }
 
-        // 3. Fallback: nạp qua input[type="file"]
         if (!uploaded) {
-          try {
-            // Đóng menu popup nếu còn lơ lửng trên màn hình
-            await page.keyboard.press('Escape');
-            await sleep(600);
-
-            const fileInputs = await page.$$('input[type="file"]');
-            if (fileInputs.length > 0) {
-              const targetInput = fileInputs[fileInputs.length - 1];
-              // Xóa giá trị cũ để kích hoạt lại sự kiện change cho file tiếp theo (Background)
-              await page.evaluate(el => { if (el) el.value = ''; }, targetInput);
-              await targetInput.uploadFile(slot.path);
-              await page.evaluate(el => {
-                if (el) el.dispatchEvent(new Event('change', { bubbles: true }));
-              }, targetInput);
-              log('info', `✅ Đã nạp [${slot.name}] qua input file fallback.`);
-              await sleep(3500);
-              uploaded = true;
-            } else {
-              log('warning', `⚠️ Không tìm thấy ô tải tệp cho [${slot.name}]`);
-            }
-          } catch (e3) {
-            log('warning', `⚠️ Cảnh báo tải [${slot.name}]: ${e3.message}`);
-          }
+          log('warning', `⚠️ Chưa thể nạp file [${slot.name}], tiếp tục với các nguyên liệu khác.`);
         }
       }
-
-      // Quay lại tab "Tạo"
-      await page.evaluate(() => {
-        const tabs = Array.from(document.querySelectorAll('button, div[role="button"], div[role="tab"]'));
-        const tao = tabs.find(b => (b.innerText || '').trim() === 'Tạo');
-        if (tao) tao.click();
-      });
-      await sleep(1000);
     }
 
     // 5. Tìm ô nhập prompt kịch bản và gõ nội dung
