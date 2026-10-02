@@ -745,60 +745,78 @@ export async function createVideoInGoogleVids({ prompts, prompt, imagePaths = []
       for (let i = 1; i < usedSlots.length && firstUploaded; i++) {
         const slot = usedSlots[i];
         log('info', `📸 Đang nạp [${slot.name}] (ảnh ${i + 1}/${usedSlots.length}) qua "+ Thêm"...`);
-        try {
-          const addBtnHandle = await page.evaluateHandle(() => {
-            const all = Array.from(document.querySelectorAll('button, div[role="button"], div'));
-            return all.find(e => {
-              const t = (e.innerText || '').trim();
-              const rect = e.getBoundingClientRect();
-              return (t === '+ Thêm' || t === 'Thêm') &&
-                     rect.width > 20 && rect.height > 20 && rect.top > window.innerHeight * 0.4 &&
-                     rect.left < window.innerWidth - 65;
-            }) || null;
-          });
-          const addBtn = addBtnHandle.asElement();
-          if (!addBtn) {
-            log('warning', `⚠️ Không tìm thấy nút "+ Thêm" để nạp [${slot.name}], bỏ qua.`);
-            continue;
-          }
-          const addBox = await addBtn.boundingBox();
-          await page.mouse.click(addBox.x + addBox.width / 2, addBox.y + addBox.height / 2);
-          await sleep(1000);
 
-          const uploadItemHandle = await page.evaluateHandle(() => {
-            const candidates = Array.from(document.querySelectorAll('*')).filter(e =>
-              (e.innerText || '').trim() === 'Tải lên' && e.children.length <= 2
-            );
-            for (const el of candidates) {
-              let p = el.parentElement;
-              for (let d = 0; d < 3 && p; d++) {
-                const txt = p.innerText || '';
-                const r = p.getBoundingClientRect();
-                if (txt.includes('Hình đại diện') && txt.includes('Tải lên') && r.width < 350 && r.height < 200) {
-                  return el;
-                }
-                p = p.parentElement;
-              }
+        // Thao tác "+Thêm" -> menu nhỏ -> "Tải lên" -> file chooser thật đôi khi timeout do UI
+        // phản hồi chậm (quan sát thực tế: timeout 8s thỉnh thoảng không đủ) — thử lại tối đa 3
+        // lần, mỗi lần nhấn Escape dọn sạch trạng thái trước khi thử lại, để không bao giờ âm
+        // thầm thiếu mất 1 ảnh tham chiếu quan trọng (ví dụ ảnh Sản phẩm) mà không ai hay biết.
+        let uploaded = false;
+        for (let attempt = 1; attempt <= 3 && !uploaded; attempt++) {
+          try {
+            const addBtnHandle = await page.evaluateHandle(() => {
+              const all = Array.from(document.querySelectorAll('button, div[role="button"], div'));
+              return all.find(e => {
+                const t = (e.innerText || '').trim();
+                const rect = e.getBoundingClientRect();
+                return (t === '+ Thêm' || t === 'Thêm') &&
+                       rect.width > 20 && rect.height > 20 && rect.top > window.innerHeight * 0.4 &&
+                       rect.left < window.innerWidth - 65;
+              }) || null;
+            });
+            const addBtn = addBtnHandle.asElement();
+            if (!addBtn) {
+              log('warning', `⚠️ Không tìm thấy nút "+ Thêm" để nạp [${slot.name}] (lần ${attempt}/3).`);
+              await page.keyboard.press('Escape');
+              await sleep(1000);
+              continue;
             }
-            return null;
-          });
-          const uploadItemEl = uploadItemHandle.asElement();
-          if (!uploadItemEl) {
-            log('warning', `⚠️ Không tìm thấy mục "Tải lên" trong menu, bỏ qua [${slot.name}].`);
-            await page.keyboard.press('Escape');
-            continue;
-          }
-          const upBox = await uploadItemEl.boundingBox();
+            const addBox = await addBtn.boundingBox();
+            await page.mouse.click(addBox.x + addBox.width / 2, addBox.y + addBox.height / 2);
+            await sleep(1200);
 
-          const [fileChooser] = await Promise.all([
-            page.waitForFileChooser({ timeout: 8000 }),
-            page.mouse.click(upBox.x + upBox.width / 2, upBox.y + upBox.height / 2)
-          ]);
-          await fileChooser.accept([slot.path]);
-          log('info', `✅ Đã nạp thành công [${slot.name}] (ảnh ${i + 1}/${usedSlots.length})`);
-          await sleep(3000);
-        } catch (eAdd) {
-          log('warning', `⚠️ Lỗi nạp [${slot.name}]: ${eAdd.message}`);
+            const uploadItemHandle = await page.evaluateHandle(() => {
+              const candidates = Array.from(document.querySelectorAll('*')).filter(e =>
+                (e.innerText || '').trim() === 'Tải lên' && e.children.length <= 2
+              );
+              for (const el of candidates) {
+                let p = el.parentElement;
+                for (let d = 0; d < 3 && p; d++) {
+                  const txt = p.innerText || '';
+                  const r = p.getBoundingClientRect();
+                  if (txt.includes('Hình đại diện') && txt.includes('Tải lên') && r.width < 350 && r.height < 200) {
+                    return el;
+                  }
+                  p = p.parentElement;
+                }
+              }
+              return null;
+            });
+            const uploadItemEl = uploadItemHandle.asElement();
+            if (!uploadItemEl) {
+              log('warning', `⚠️ Không tìm thấy mục "Tải lên" trong menu để nạp [${slot.name}] (lần ${attempt}/3).`);
+              await page.keyboard.press('Escape');
+              await sleep(1000);
+              continue;
+            }
+            const upBox = await uploadItemEl.boundingBox();
+
+            const [fileChooser] = await Promise.all([
+              page.waitForFileChooser({ timeout: 15000 }),
+              page.mouse.click(upBox.x + upBox.width / 2, upBox.y + upBox.height / 2)
+            ]);
+            await fileChooser.accept([slot.path]);
+            log('info', `✅ Đã nạp thành công [${slot.name}] (ảnh ${i + 1}/${usedSlots.length})${attempt > 1 ? ` (thử lần ${attempt})` : ''}`);
+            await sleep(3000);
+            uploaded = true;
+          } catch (eAdd) {
+            log('warning', `⚠️ Lỗi nạp [${slot.name}] (lần ${attempt}/3): ${eAdd.message}`);
+            await page.keyboard.press('Escape');
+            await sleep(1000);
+          }
+        }
+
+        if (!uploaded) {
+          log('error', `❌ Nạp [${slot.name}] thất bại sau 3 lần thử — video sẽ thiếu ảnh tham chiếu này.`);
         }
       }
 
