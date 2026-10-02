@@ -325,10 +325,10 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
 
     log('info', '⏳ Đang chờ Google Vids sinh video (Omni 720p 9:16)...');
 
-    // 6. Chờ quá trình sinh video hoàn tất (safe polling with detached frame protection)
+    // 6. Chờ quá trình sinh video hoàn tất (tăng lên 360s = 6 phút để đủ thời gian render đa ảnh)
     let videoSrc = null;
     let consecutiveErrors = 0;
-    for (let i = 0; i < 60; i++) {
+    for (let i = 0; i < 90; i++) {
       await sleep(4000);
       let status = null;
       try {
@@ -362,10 +362,16 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
           const hasError = !!visibleError;
           const errorMsg = visibleError || null;
 
-          // Kiểm tra xem đã hoàn thành chưa (xuất hiện nút Chèn hoặc Tạo lại)
+          // Kiểm tra xem đã hoàn thành chưa (xuất hiện nút Chèn, Insert, Tạo lại, Regenerate)
           const buttons = Array.from(document.querySelectorAll('button, div[role="button"]'));
-          const hasChen = buttons.some(b => (b.innerText || '').trim().includes('Chèn'));
-          const hasTaoLai = buttons.some(b => (b.innerText || '').trim().includes('Tạo lại'));
+          const hasChen = buttons.some(b => {
+            const t = (b.innerText || '').trim();
+            return t.includes('Chèn') || t.includes('Insert');
+          });
+          const hasTaoLai = buttons.some(b => {
+            const t = (b.innerText || '').trim();
+            return t.includes('Tạo lại') || t.includes('Regenerate');
+          });
 
           // Tìm đúng video do AI sinh ra (bỏ qua video quảng cáo mẫu)
           const vids = Array.from(document.querySelectorAll('video'));
@@ -377,7 +383,7 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
                    s.includes('blob:') ||
                    (v.className && v.className.includes('Successfulvideogenerationthumbnail')) ||
                    (v.duration && v.duration > 3) ||
-                   (hasChen && s.length > 5);
+                   ((hasChen || hasTaoLai) && s.length > 5);
           });
 
           let foundSrc = null;
@@ -390,7 +396,7 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
             percent,
             hasError,
             errorMsg,
-            hasChen,
+            hasChen: hasChen || hasTaoLai,
             hasTaoLai,
             videoCount: vids.length
           };
@@ -439,7 +445,13 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
     }
 
     if (!videoSrc) {
-      throw new Error('Hết thời gian chờ Google Vids tạo video.');
+      try {
+        const debugPath = path.resolve('temp/vids_timeout_debug.png');
+        fs.mkdirSync(path.dirname(debugPath), { recursive: true });
+        await page.screenshot({ path: debugPath, fullPage: true });
+        log('warning', `📸 Đã lưu ảnh chụp màn hình debug tại: ${debugPath}`);
+      } catch (ssErr) {}
+      throw new Error('Hết thời gian chờ Google Vids tạo video (quá 6 phút).');
     }
 
     // 7. Tải video MP4 về máy tính qua CDP download
