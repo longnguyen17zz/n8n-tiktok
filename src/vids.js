@@ -111,35 +111,100 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
     log('info', `📄 Đã vào trang Google Vids editor: ${page.url()}`);
     await sleep(3000);
 
-    // Đóng bất kỳ modal / popup còn sót lại (như "Huỷ tạo hình đại diện?", "Chọn hình đại diện")
-    await page.evaluate(() => {
-      const allBtns = Array.from(document.querySelectorAll('button, div[role="button"]'));
-      const closeBtn = allBtns.find(b => {
-        const t = (b.innerText || '').trim();
-        const aria = (b.getAttribute('aria-label') || '').trim();
-        return t === 'Huỷ' || t === 'Đóng' || aria === 'Đóng' || aria === 'Huỷ';
+    // 2. Chọn định dạng video dọc (Dọc 9:16) và mở tính năng Tạo video AI
+    log('info', '📱 Chọn định dạng video dọc (9:16) và khởi tạo video AI...');
+    try {
+      // 2.1. Chọn Dọc (9:16) nếu có modal chào mừng
+      await page.evaluate(() => {
+        const buttons = Array.from(document.querySelectorAll('button, div[role="button"]'));
+        const docBtn = buttons.find(b => (b.innerText || '').trim().includes('Dọc'));
+        if (docBtn) docBtn.click();
       });
-      if (closeBtn) closeBtn.click();
-    });
-    await page.keyboard.press('Escape');
-    await sleep(800);
+      await sleep(1000);
 
-    // 2. Chọn định dạng video dọc (Dọc 9:16)
-    log('info', '📱 Chọn định dạng video dọc (9:16)...');
-    await page.evaluate(() => {
-      const btn = Array.from(document.querySelectorAll('button')).find(b => b.innerText && b.innerText.includes('Dọc'));
-      if (btn) btn.click();
-    });
-    await sleep(1000);
+      // 2.2. Bấm card "Tạo video AI" bằng tọa độ chuột thật
+      const aiCardHandle = await page.evaluateHandle(() => {
+        const all = Array.from(document.querySelectorAll('*'));
+        return all.find(c => {
+          const t = (c.innerText || '').trim();
+          const r = c.getBoundingClientRect();
+          return (t.includes('Tạo video AI') || t.includes('Tạo mới')) && r.width > 60 && r.height > 60 && r.width < 320;
+        }) || null;
+      });
+      const aiCardEl = aiCardHandle.asElement();
+      if (aiCardEl) {
+        const box = await aiCardEl.boundingBox();
+        if (box && box.width > 0) {
+          log('info', `🎯 Click card Tạo video AI tại (${Math.round(box.x + box.width / 2)}, ${Math.round(box.y + box.height / 2)})...`);
+          await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+        } else {
+          await page.evaluate(el => el.click(), aiCardEl);
+        }
+      }
+      await sleep(2500);
 
-    // 3. Mở tính năng "Tạo video AI"
-    log('info', '🤖 Bấm chọn "Tạo video AI"...');
-    await page.evaluate(() => {
-      const cards = Array.from(document.querySelectorAll('button, div[role="button"]'));
-      const aiCard = cards.find(c => c.innerText && c.innerText.includes('Tạo video AI'));
-      if (aiCard) aiCard.click();
-    });
-    await sleep(2500);
+      // 2.3. ĐÓNG HOÀN TOÀN modal chào mừng ("Xin chào ... Hãy bắt đầu sáng tạo") nếu còn che màn hình
+      await page.evaluate(() => {
+        const all = Array.from(document.querySelectorAll('*'));
+        const welcome = all.find(e => {
+          const t = (e.innerText || '').trim();
+          return t.includes('Hãy bắt đầu sáng tạo') || t.includes('Xin chào');
+        });
+        if (welcome) {
+          let modal = welcome;
+          while (modal && modal !== document.body) {
+            const r = modal.getBoundingClientRect();
+            if (r.width > 350 && r.height > 250) break;
+            modal = modal.parentElement;
+          }
+          if (modal) {
+            // Click nút X góc trên bên phải của modal
+            const closeBtns = Array.from(modal.querySelectorAll('button, div[role="button"], [aria-label]'));
+            const xBtn = closeBtns.find(b => {
+              const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+              const txt = (b.innerText || '').trim();
+              const r = b.getBoundingClientRect();
+              return (aria.includes('đóng') || aria.includes('close') || aria.includes('huỷ') || txt === '✕' || txt === '×') && r.top < window.innerHeight * 0.4;
+            }) || modal.querySelector('svg')?.closest('button, div[role="button"]');
+            if (xBtn) xBtn.click();
+            // Ẩn modal để giải phóng màn hình tuyệt đối
+            modal.style.display = 'none';
+          }
+        }
+
+        // Xoá tất cả lớp phủ scrim / overlay / backdrop làm mờ màn hình
+        const scrims = Array.from(document.querySelectorAll('.modal-dialog-bg, .picker-dialog-bg, [class*="scrim"], [class*="backdrop"], [class*="overlay"]'));
+        scrims.forEach(s => {
+          const r = s.getBoundingClientRect();
+          if (r.width > window.innerWidth * 0.7 && r.height > window.innerHeight * 0.7) {
+            s.style.display = 'none';
+          }
+        });
+      });
+      await page.keyboard.press('Escape');
+      await sleep(1000);
+
+      // 2.4. Kiểm tra xem panel "Đoạn video do AI tạo" đã mở chưa, nếu chưa bấm icon Video AI trên sidebar
+      const isPanelOpen = await page.evaluate(() => {
+        const all = Array.from(document.querySelectorAll('*'));
+        return all.some(e => (e.innerText || '').includes('Đoạn video do AI tạo') || (e.innerText || '').includes('Mô tả video của bạn'));
+      });
+      if (!isPanelOpen) {
+        log('info', '🎬 Mở panel Video AI từ thanh công cụ bên phải...');
+        await page.evaluate(() => {
+          const all = Array.from(document.querySelectorAll('button, div[role="button"], [role="tab"]'));
+          const vBtn = all.find(b => {
+            const t = (b.innerText || '').trim();
+            const aria = (b.getAttribute('aria-label') || '').trim();
+            return t === 'Video AI' || aria === 'Video AI' || t.includes('Video AI') || aria.includes('Video AI');
+          });
+          if (vBtn) vBtn.click();
+        });
+        await sleep(2000);
+      }
+    } catch (eInit) {
+      log('warning', `⚠️ Lưu ý khi khởi tạo giao diện: ${eInit.message}`);
+    }
 
     // 4. Nạp tất cả ảnh nguyên liệu (Mẫu ảnh, Sản phẩm, Background) vào Thành phần của Video AI:
     const slots = [];
@@ -307,8 +372,25 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
     // 6. Bấm nút Tạo video AI (nút tròn màu xanh có icon mũi tên lên ở góc dưới cùng bên phải của panel prompt)
     log('info', '🎬 Bấm nút Tạo video AI...');
     await page.evaluate(() => {
-      const closeBtns = Array.from(document.querySelectorAll('button[aria-label="Đóng"], button[aria-label="Close"], .picker-dialog-close'));
+      // Ẩn modal chào mừng nếu còn hiển thị
+      const all = Array.from(document.querySelectorAll('*'));
+      const welcome = all.find(e => (e.innerText || '').includes('Hãy bắt đầu sáng tạo') || (e.innerText || '').includes('Xin chào'));
+      if (welcome) {
+        let m = welcome;
+        while (m && m !== document.body) {
+          if (m.getBoundingClientRect().width > 350) { m.style.display = 'none'; break; }
+          m = m.parentElement;
+        }
+      }
+      // Bấm các nút đóng nếu có
+      const closeBtns = Array.from(document.querySelectorAll('button[aria-label*="Đóng" i], button[aria-label*="Close" i], [aria-label*="Đóng" i], [aria-label*="Close" i], .picker-dialog-close'));
       closeBtns.forEach(b => { try { b.click(); } catch (e) {} });
+
+      // Xoá tất cả scrim / backdrop
+      const scrims = Array.from(document.querySelectorAll('.modal-dialog-bg, .picker-dialog-bg, [class*="scrim"], [class*="backdrop"], [class*="overlay"]'));
+      scrims.forEach(s => {
+        if (s.getBoundingClientRect().width > window.innerWidth * 0.7) s.style.display = 'none';
+      });
     });
     await page.keyboard.press('Escape');
     await sleep(600);
@@ -416,7 +498,7 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
     for (let c = 0; c < 6; c++) {
       const isRunning = await page.evaluate(() => {
         const t = document.body.innerText || '';
-        return t.includes('Đang tạo') || t.includes('Generating') || !!t.match(/(\d+)%/);
+        return t.includes('Đang tạo') || t.includes('Generating') || t.includes('Bản nháp') || !!t.match(/(\d+)%/);
       });
       if (isRunning) {
         log('info', '🚀 Đã kích hoạt Google Vids AI bắt đầu tạo video thành công!');
@@ -438,10 +520,11 @@ export async function createVideoInGoogleVids({ prompt, imagePaths = [], avatarP
     }
 
     if (!hasStarted) {
-      log('warning', '⚠️ Chưa thấy giao diện hiển thị trạng thái đang tạo, đã chụp ảnh kiểm tra.');
+      log('warning', '⚠️ Chưa thấy giao diện hiển thị trạng thái đang tạo video AI.');
       try {
         await page.screenshot({ path: path.resolve('temp/vids_trigger_check.png') });
       } catch (eSc) {}
+      throw new Error('Google Vids chưa bắt đầu tạo video sau khi nhấn nút Tạo. Đã lưu ảnh kiểm tra tại temp/vids_trigger_check.png');
     }
 
     log('info', '⏳ Đang chờ Google Vids sinh video (Omni 720p 9:16)...');
