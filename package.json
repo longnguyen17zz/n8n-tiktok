@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
-    "ui": "node src/server.js",
+    "ui": "node --watch src/server.js",
     "login": "node src/login.js",
     "vids": "node src/vids.js"
   },
