@@ -144,7 +144,7 @@ app.get('/api/tiktok/queue', async (req, res) => {
     return res.json({ success: true, items: [], notice: 'Chưa cấu hình GOOGLE_SERVICE_ACCOUNT_JSON trong file .env.' });
   }
   try {
-    const items = await Google.fetchTikTokQueueRows(30);
+    const items = await Google.fetchTikTokQueueRows(300);
     res.json({ success: true, items });
   } catch (err) {
     addLog('warning', `Lỗi tải danh sách video chờ đăng TikTok: ${err.message}`);
