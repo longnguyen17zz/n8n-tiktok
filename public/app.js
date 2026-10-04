@@ -666,17 +666,33 @@ async function fetchTikTokQueue() {
 
     if (sidebarTikTokCount) sidebarTikTokCount.textContent = (data.items || []).length;
 
-    if (!data.items || data.items.length === 0) {
+    const filterEl = document.getElementById('tiktokStatusFilter');
+    const filterValue = filterEl ? filterEl.value : 'cho_dang';
+    const allItems = data.items || [];
+    const filteredItems = allItems.filter(item => {
+      const s = (item['Trạng Thái upload'] || '').toLowerCase();
+      const posted = s.includes('đã đăng') || s.includes('thành công');
+      const pending = s.includes('chờ đăng');
+      if (filterValue === 'cho_dang') return pending;
+      if (filterValue === 'da_dang') return posted;
+      return true; // 'all'
+    });
+
+    if (allItems.length === 0) {
       tiktokQueueTableBody.innerHTML = '<tr><td colspan="6" class="text-center py-4 text-muted">Chưa có video nào đã tạo xong để đăng.</td></tr>';
+      return;
+    }
+    if (filteredItems.length === 0) {
+      tiktokQueueTableBody.innerHTML = '<tr><td colspan="6" class="text-center py-4 text-muted">Không có video nào khớp bộ lọc hiện tại.</td></tr>';
       return;
     }
 
     window._tiktokItems = {};
-    data.items.forEach(item => {
+    allItems.forEach(item => {
       window._tiktokItems[item.rowNumber] = item;
     });
 
-    tiktokQueueTableBody.innerHTML = data.items.map(item => {
+    tiktokQueueTableBody.innerHTML = filteredItems.map(item => {
       const uploadStatus = (item['Trạng Thái upload'] || '').toLowerCase();
       const alreadyPosted = uploadStatus.includes('đã đăng') || uploadStatus.includes('thành công');
       return `

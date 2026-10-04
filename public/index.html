@@ -502,6 +502,11 @@
               <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 4px;">Các hàng đã tạo video xong (đọc từ Google Sheet), đăng trực tiếp lên kênh TikTok kèm giỏ hàng TikTok Shop.</p>
             </div>
             <div class="panel-actions">
+              <select id="tiktokStatusFilter" class="btn btn-secondary btn-sm" style="cursor: pointer;" onchange="fetchTikTokQueue()">
+                <option value="cho_dang" selected>⏳ Chờ Đăng</option>
+                <option value="da_dang">✓ Đã Đăng</option>
+                <option value="all">Tất cả</option>
+              </select>
               <button class="btn btn-secondary btn-sm" onclick="fetchTikTokQueue()">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M23 4v6h-6"></path>
