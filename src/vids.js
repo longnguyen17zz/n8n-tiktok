@@ -835,17 +835,43 @@ export async function createVideoInGoogleVids({ prompts, prompt, imagePaths = []
         await enterPromptAndSubmit(sceneList[0], '📝 Đang nhập kịch bản cảnh 1:');
       } else {
         log('info', `🔗 Đang bấm "Kéo dài" để nối cảnh ${sceneIdx + 1}/${sceneList.length}...`);
-        const keoDaiHandle = await page.evaluateHandle(() => {
-          const all = Array.from(document.querySelectorAll('button, div[role="button"]'));
-          return all.find(e => {
-            const t = (e.innerText || '').trim();
-            const r = e.getBoundingClientRect();
-            return t === 'Kéo dài' && r.top > 100 && r.left > window.innerWidth * 0.4 && r.left < window.innerWidth - 65;
-          }) || null;
-        });
-        const keoDaiEl = keoDaiHandle.asElement();
+
+        // QUAN TRỌNG: waitForGenerationComplete() coi là "xong" ngay khi bắt được URL video từ
+        // mạng (ưu tiên 1), nhưng nút "Kéo dài" trên giao diện thường render CHẬM HƠN đáng kể —
+        // đo thực tế có lúc phải đợi tới ~70s sau khi video đã hoàn thành mới thấy nút. Vì vậy
+        // cần kiên nhẫn chờ dài hơn nhiều (tối đa ~90s) thay vì bỏ cuộc sau vài giây.
+        let keoDaiEl = null;
+        const KEODAI_MAX_ATTEMPTS = 30;
+        for (let attempt = 1; attempt <= KEODAI_MAX_ATTEMPTS && !keoDaiEl; attempt++) {
+          const keoDaiHandle = await page.evaluateHandle(() => {
+            const all = Array.from(document.querySelectorAll('button, div[role="button"]'));
+            return all.find(e => {
+              const t = (e.innerText || '').trim();
+              const r = e.getBoundingClientRect();
+              return t === 'Kéo dài' && r.top > 100 && r.left > window.innerWidth * 0.4 && r.left < window.innerWidth - 65;
+            }) || null;
+          });
+          keoDaiEl = keoDaiHandle.asElement();
+          if (!keoDaiEl && attempt < KEODAI_MAX_ATTEMPTS) {
+            if (attempt % 5 === 0) log('info', `⏳ Chưa thấy nút "Kéo dài" (${attempt * 3}s), chờ thêm...`);
+            await sleep(3000);
+          }
+        }
+
         if (!keoDaiEl) {
           log('warning', `⚠️ Không tìm thấy nút "Kéo dài", dừng lại ở ${sceneIdx}/${sceneList.length} cảnh đã tạo.`);
+          try {
+            const debugPath = path.resolve(`temp/vids_no_keodai_scene${sceneIdx + 1}.png`);
+            await page.screenshot({ path: debugPath });
+            const panelTexts = await page.evaluate(() => {
+              const buttons = Array.from(document.querySelectorAll('button, div[role="button"]'));
+              return buttons.filter(b => {
+                const r = b.getBoundingClientRect();
+                return r.top > 100 && r.left > window.innerWidth * 0.4 && r.left < window.innerWidth - 65 && r.width > 0;
+              }).map(b => (b.innerText || '').trim()).filter(Boolean);
+            });
+            log('warning', `📸 Ảnh debug: ${debugPath} | Các nút thấy được trong panel: ${JSON.stringify(panelTexts)}`);
+          } catch (eDbg) {}
           break;
         }
         const kdBox = await keoDaiEl.boundingBox();
