@@ -1,10 +1,11 @@
 name: 2. Tự Động Đăng TikTok (Lên Lịch hoặc Bấm Nút)
 
 on:
-  schedule:
-    # Tự động chạy vào 2 khung giờ vàng mỗi ngày (Giờ VN: 11:30 trưa & 19:30 tối)
-    # 11:30 VN = 04:30 UTC | 19:30 VN = 12:30 UTC
-    - cron: '30 4,12 * * *'
+  # Lịch tự động đăng 2 lần/ngày ĐÃ TẮT theo yêu cầu — chỉ còn đăng bằng tay qua workflow_dispatch.
+  # Muốn bật lại: bỏ comment 2 dòng dưới.
+  # schedule:
+  #   # Giờ VN: 11:30 trưa & 19:30 tối | 11:30 VN = 04:30 UTC | 19:30 VN = 12:30 UTC
+  #   - cron: '30 4,12 * * *'
   workflow_dispatch: # Nút bấm để bạn đăng ngay lập tức bằng tay bất cứ lúc nào
 
 jobs:
