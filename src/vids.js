@@ -379,8 +379,15 @@ export async function createVideoInGoogleVids({ prompts, prompt, imagePaths = []
               .filter(isVisible)
               .some(b => (b.innerText || '').trim() === 'Thử lại' || (b.innerText || '').trim() === 'Xoá');
             if (hasRetryDeleteButtons) {
-              const cardEl = Array.from(document.querySelectorAll('*')).find(e => isErrorText((e.innerText || '').trim()) && isVisible(e) && e.children.length <= 3);
-              if (cardEl) visibleError = (cardEl.innerText || '').trim();
+              // Lấy phần tử KHỚP NHỎ NHẤT (innerText ngắn nhất) trong số các phần tử chứa từ khoá lỗi
+              // và đang hiển thị — tránh vớ phải 1 container cha rộng (ví dụ cả panel bên phải) chỉ vì
+              // nó tình cờ cũng chứa từ khoá lỗi ở đâu đó bên trong, khiến log bị dump cả trang.
+              const candidates = Array.from(document.querySelectorAll('*'))
+                .filter(e => isVisible(e) && isErrorText((e.innerText || '').trim()));
+              if (candidates.length > 0) {
+                candidates.sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
+                visibleError = (candidates[0].innerText || '').trim().slice(0, 300);
+              }
             }
           }
 
