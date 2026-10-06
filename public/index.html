@@ -500,8 +500,12 @@
             <div class="panel-title">
               <h2>Video chờ đăng TikTok</h2>
               <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 4px;">Các hàng đã tạo video xong (đọc từ Google Sheet), đăng trực tiếp lên kênh TikTok kèm giỏ hàng TikTok Shop.</p>
+              <p id="tiktokScheduleDetailText" style="font-size: 0.8rem; color: var(--text-muted); margin-top: 2px;">Đăng TikTok tự động: Đã tắt — chỉ đăng khi bạn tự bấm từng video.</p>
             </div>
             <div class="panel-actions">
+              <button class="btn btn-primary btn-sm" id="btnTiktokScheduleToggle" onclick="toggleTikTokSchedule()">
+                <span id="btnTiktokScheduleText">▶ Bật Đăng Tự Động</span>
+              </button>
               <select id="tiktokStatusFilter" class="btn btn-secondary btn-sm" style="cursor: pointer;" onchange="fetchTikTokQueue()">
                 <option value="cho_dang" selected>⏳ Chờ Đăng</option>
                 <option value="da_dang">✓ Đã Đăng</option>

@@ -9,7 +9,7 @@ import * as Google from './google.js';
 import * as AI from './ai.js';
 import { createVideoInGoogleVids } from './vids.js';
 import { mergeVideosWithFfmpeg } from './ffmpeg.js';
-import { runWorker, processRow, sendTelegram, resolveLogoPath, triggerTikTokUpload } from './index.js';
+import { runWorker, processRow, sendTelegram, resolveLogoPath, triggerTikTokUpload, runTikTokWorker } from './index.js';
 import { exec } from 'child_process';
 import { getAuthUrl, handleCallback, getOAuthStatus, disconnectOAuth, getAuthenticatedDriveClient } from './oauth.js';
 import { isTikTokConfigured, normalizeTikTokSession } from './tiktok.js';
@@ -63,6 +63,24 @@ let scheduleState = {
 let scheduleTimer = null;
 let currentProcessingItem = null;
 
+// ================= CẤU HÌNH & TRẠNG THÁI ĐĂNG TIKTOK TỰ ĐỘNG (TÁCH RIÊNG HOÀN TOÀN) =================
+// Lịch này CHỈ đăng video (hàng "Chờ Đăng") lên TikTok, không bao giờ tự tạo video — hoàn toàn
+// độc lập với scheduleConfig ở trên (vốn chỉ tạo video, không bao giờ tự đăng TikTok).
+const tiktokScheduleConfig = {
+  enabled: false,
+  intervalSeconds: 1800 // Mặc định 30 phút/lần để tránh đăng dồn dập bị TikTok đánh dấu spam
+};
+
+let tiktokScheduleState = {
+  isProcessing: false,
+  lastRunTime: null,
+  nextRunTime: null,
+  totalPostedSession: 0,
+  currentStatus: 'Đã tạm dừng'
+};
+
+let tiktokScheduleTimer = null;
+
 // ================= API ENDPOINTS =================
 
 // 1. Trạng thái hệ thống & Thống kê
@@ -78,6 +96,15 @@ app.get('/api/status', async (req, res) => {
         ...scheduleState,
         secondsUntilNextRun: (scheduleState.nextRunTime && scheduleConfig.enabled && !scheduleState.isProcessing)
           ? Math.max(0, Math.round((scheduleState.nextRunTime - Date.now()) / 1000))
+          : null
+      }
+    },
+    tiktokSchedule: {
+      config: tiktokScheduleConfig,
+      state: {
+        ...tiktokScheduleState,
+        secondsUntilNextRun: (tiktokScheduleState.nextRunTime && tiktokScheduleConfig.enabled && !tiktokScheduleState.isProcessing)
+          ? Math.max(0, Math.round((tiktokScheduleState.nextRunTime - Date.now()) / 1000))
           : null
       }
     },
@@ -355,6 +382,51 @@ app.post('/api/worker/toggle', (req, res) => {
     scheduleState.currentStatus = 'Đã tạm dừng';
   }
   res.json({ workerRunning: scheduleConfig.enabled });
+});
+
+// 4b. Lên lịch đăng TikTok tự động (TÁCH RIÊNG khỏi lịch tạo video ở trên)
+app.get('/api/tiktok/schedule', (req, res) => {
+  res.json({
+    success: true,
+    config: tiktokScheduleConfig,
+    state: {
+      ...tiktokScheduleState,
+      secondsUntilNextRun: (tiktokScheduleState.nextRunTime && tiktokScheduleConfig.enabled && !tiktokScheduleState.isProcessing)
+        ? Math.max(0, Math.round((tiktokScheduleState.nextRunTime - Date.now()) / 1000))
+        : null
+    }
+  });
+});
+
+app.post('/api/tiktok/schedule/toggle', (req, res) => {
+  tiktokScheduleConfig.enabled = !tiktokScheduleConfig.enabled;
+  if (tiktokScheduleConfig.enabled) {
+    addLog('info', `🟢 Đã BẬT đăng TikTok tự động (chu kỳ ${tiktokScheduleConfig.intervalSeconds}s/lần, chỉ đăng, không tự tạo video).`);
+    executeTikTokScheduledRun();
+  } else {
+    addLog('warning', '🔴 Đã TẮT đăng TikTok tự động.');
+    if (tiktokScheduleTimer) clearTimeout(tiktokScheduleTimer);
+    tiktokScheduleState.nextRunTime = null;
+    tiktokScheduleState.currentStatus = 'Đã tạm dừng';
+  }
+  res.json({
+    success: true,
+    enabled: tiktokScheduleConfig.enabled,
+    config: tiktokScheduleConfig,
+    state: tiktokScheduleState
+  });
+});
+
+app.post('/api/tiktok/schedule/config', (req, res) => {
+  const { intervalSeconds } = req.body;
+  if (intervalSeconds !== undefined) {
+    tiktokScheduleConfig.intervalSeconds = Math.max(60, parseInt(intervalSeconds, 10));
+  }
+  addLog('info', `⚙️ Đã cập nhật chu kỳ đăng TikTok tự động: ${tiktokScheduleConfig.intervalSeconds}s.`);
+  if (tiktokScheduleConfig.enabled && !tiktokScheduleState.isProcessing) {
+    scheduleTikTokNextRun();
+  }
+  res.json({ success: true, config: tiktokScheduleConfig, state: tiktokScheduleState });
 });
 
 // 5. Chạy tạo video cho 1 dòng cụ thể từ Google Sheet
@@ -836,6 +908,59 @@ async function executeScheduledRun() {
       scheduleNextRun();
     } else {
       scheduleState.currentStatus = 'Đã tạm dừng';
+    }
+  }
+}
+
+// ================= HỆ THỐNG LẬP LỊCH ĐĂNG TIKTOK TỰ ĐỘNG (TÁCH RIÊNG) =================
+
+function scheduleTikTokNextRun(delayMs = null) {
+  if (tiktokScheduleTimer) {
+    clearTimeout(tiktokScheduleTimer);
+    tiktokScheduleTimer = null;
+  }
+
+  if (!tiktokScheduleConfig.enabled) {
+    tiktokScheduleState.nextRunTime = null;
+    tiktokScheduleState.currentStatus = 'Đã tạm dừng';
+    return;
+  }
+
+  const waitMs = delayMs !== null ? delayMs : (tiktokScheduleConfig.intervalSeconds * 1000);
+  tiktokScheduleState.nextRunTime = Date.now() + waitMs;
+  tiktokScheduleState.currentStatus = `Chờ đợt đăng tiếp theo (${Math.round(waitMs / 1000)}s)...`;
+
+  tiktokScheduleTimer = setTimeout(executeTikTokScheduledRun, waitMs);
+}
+
+async function executeTikTokScheduledRun() {
+  if (!tiktokScheduleConfig.enabled) return;
+  if (tiktokScheduleState.isProcessing) return;
+
+  tiktokScheduleState.isProcessing = true;
+  tiktokScheduleState.lastRunTime = Date.now();
+  tiktokScheduleState.currentStatus = 'Đang quét hàng "Chờ Đăng" trên Google Sheet...';
+
+  try {
+    // runTikTokWorker tự tìm hàng "Chờ Đăng" cũ nhất và đăng đúng 1 video mỗi lần gọi — KHÔNG
+    // bao giờ tạo video mới, chỉ đăng video đã có sẵn, đúng tách biệt với lịch tạo video.
+    const result = await runTikTokWorker(addLog);
+    if (result) {
+      tiktokScheduleState.totalPostedSession++;
+      tiktokScheduleState.currentStatus = 'Vừa đăng xong 1 video.';
+    } else {
+      tiktokScheduleState.currentStatus = 'Không có video nào đang "Chờ Đăng".';
+    }
+  } catch (err) {
+    addLog('error', `[TikTok Schedule] Lỗi: ${err.message}`);
+    tiktokScheduleState.currentStatus = `Lỗi: ${err.message}`;
+  } finally {
+    tiktokScheduleState.isProcessing = false;
+
+    if (tiktokScheduleConfig.enabled) {
+      scheduleTikTokNextRun();
+    } else {
+      tiktokScheduleState.currentStatus = 'Đã tạm dừng';
     }
   }
 }

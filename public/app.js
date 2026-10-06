@@ -373,7 +373,38 @@ async function fetchStatus() {
       `;
     }
 
-    // 4. Cập nhật trạng thái TikTok Engine
+    // 4. Cập nhật trạng thái lịch đăng TikTok tự động (tách riêng khỏi lịch tạo video)
+    if (data.tiktokSchedule) {
+      const tEnabled = data.tiktokSchedule.config.enabled;
+      const tProcessing = data.tiktokSchedule.state.isProcessing;
+      const btnText = document.getElementById('btnTiktokScheduleText');
+      const btnToggle = document.getElementById('btnTiktokScheduleToggle');
+      const detailText = document.getElementById('tiktokScheduleDetailText');
+
+      if (btnToggle && btnText) {
+        if (tEnabled) {
+          btnToggle.classList.remove('btn-primary');
+          btnToggle.classList.add('btn-secondary');
+          btnText.textContent = tProcessing ? '📱 Đang đăng...' : '⏸ Tắt Đăng Tự Động';
+        } else {
+          btnToggle.classList.remove('btn-secondary');
+          btnToggle.classList.add('btn-primary');
+          btnText.textContent = '▶ Bật Đăng Tự Động';
+        }
+      }
+
+      if (detailText) {
+        if (!tEnabled) {
+          detailText.textContent = 'Đăng TikTok tự động: Đã tắt — chỉ đăng khi bạn tự bấm từng video.';
+        } else {
+          const sec = data.tiktokSchedule.state.secondsUntilNextRun;
+          const waitTxt = (sec !== null && sec !== undefined && !tProcessing) ? ` • Lần đăng tiếp theo sau ${sec}s` : '';
+          detailText.textContent = `Đăng TikTok tự động: Đang bật (chu kỳ ${data.tiktokSchedule.config.intervalSeconds}s) • ${data.tiktokSchedule.state.currentStatus || ''}${waitTxt} • Đã đăng ${data.tiktokSchedule.state.totalPostedSession || 0} video phiên này.`;
+        }
+      }
+    }
+
+    // 5. Cập nhật trạng thái TikTok Engine
     fetchTikTokConfig();
   } catch (err) {
     console.error('Lỗi lấy status:', err);
@@ -394,6 +425,17 @@ async function toggleSchedule() {
 
 // Bật / tắt từ Header
 btnToggleWorker.addEventListener('click', toggleSchedule);
+
+// TIKTOK AUTO-POST SCHEDULE ACTIONS (tách riêng khỏi lịch tạo video)
+async function toggleTikTokSchedule() {
+  try {
+    await fetch(`${API_BASE}/api/tiktok/schedule/toggle`, { method: 'POST' });
+    fetchStatus();
+    fetchLogs();
+  } catch (err) {
+    alert('Không kết nối được server để bật/tắt đăng TikTok tự động: ' + err.message);
+  }
+}
 
 async function updateScheduleInterval() {
   const sel = document.getElementById('scheduleIntervalSelect');
