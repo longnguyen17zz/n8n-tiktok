@@ -66,20 +66,22 @@ let currentProcessingItem = null;
 // ================= CẤU HÌNH & TRẠNG THÁI ĐĂNG TIKTOK TỰ ĐỘNG (TÁCH RIÊNG HOÀN TOÀN) =================
 // Lịch này CHỈ đăng video (hàng "Chờ Đăng") lên TikTok, không bao giờ tự tạo video — hoàn toàn
 // độc lập với scheduleConfig ở trên (vốn chỉ tạo video, không bao giờ tự đăng TikTok).
+// Đăng theo ĐÚNG KHUNG GIỜ CỐ ĐỊNH trong ngày (giờ địa phương máy chạy server), không phải chu kỳ
+// lặp — ví dụ [7, 11, 17, 23] nghĩa là đăng 1 video lúc 7h, 11h, 17h và 23h mỗi ngày.
 const tiktokScheduleConfig = {
   enabled: false,
-  intervalSeconds: 1800 // Mặc định 30 phút/lần để tránh đăng dồn dập bị TikTok đánh dấu spam
+  postHours: [7, 11, 17, 23]
 };
 
 let tiktokScheduleState = {
   isProcessing: false,
   lastRunTime: null,
-  nextRunTime: null,
+  lastPostedKey: null, // "YYYY-MM-DD-HH" của khung giờ vừa đăng, để không đăng trùng trong cùng 1 giờ
   totalPostedSession: 0,
   currentStatus: 'Đã tạm dừng'
 };
 
-let tiktokScheduleTimer = null;
+let tiktokScheduleCheckInterval = null;
 
 // ================= API ENDPOINTS =================
 
@@ -103,9 +105,7 @@ app.get('/api/status', async (req, res) => {
       config: tiktokScheduleConfig,
       state: {
         ...tiktokScheduleState,
-        secondsUntilNextRun: (tiktokScheduleState.nextRunTime && tiktokScheduleConfig.enabled && !tiktokScheduleState.isProcessing)
-          ? Math.max(0, Math.round((tiktokScheduleState.nextRunTime - Date.now()) / 1000))
-          : null
+        secondsUntilNextRun: tiktokScheduleConfig.enabled ? secondsUntilNextTikTokSlot() : null
       }
     },
     engine: CONFIG.ENGINE || 'vids',
@@ -384,16 +384,14 @@ app.post('/api/worker/toggle', (req, res) => {
   res.json({ workerRunning: scheduleConfig.enabled });
 });
 
-// 4b. Lên lịch đăng TikTok tự động (TÁCH RIÊNG khỏi lịch tạo video ở trên)
+// 4b. Lên lịch đăng TikTok tự động theo KHUNG GIỜ CỐ ĐỊNH (TÁCH RIÊNG khỏi lịch tạo video ở trên)
 app.get('/api/tiktok/schedule', (req, res) => {
   res.json({
     success: true,
     config: tiktokScheduleConfig,
     state: {
       ...tiktokScheduleState,
-      secondsUntilNextRun: (tiktokScheduleState.nextRunTime && tiktokScheduleConfig.enabled && !tiktokScheduleState.isProcessing)
-        ? Math.max(0, Math.round((tiktokScheduleState.nextRunTime - Date.now()) / 1000))
-        : null
+      secondsUntilNextRun: tiktokScheduleConfig.enabled ? secondsUntilNextTikTokSlot() : null
     }
   });
 });
@@ -401,12 +399,11 @@ app.get('/api/tiktok/schedule', (req, res) => {
 app.post('/api/tiktok/schedule/toggle', (req, res) => {
   tiktokScheduleConfig.enabled = !tiktokScheduleConfig.enabled;
   if (tiktokScheduleConfig.enabled) {
-    addLog('info', `🟢 Đã BẬT đăng TikTok tự động (chu kỳ ${tiktokScheduleConfig.intervalSeconds}s/lần, chỉ đăng, không tự tạo video).`);
-    executeTikTokScheduledRun();
+    addLog('info', `🟢 Đã BẬT đăng TikTok tự động theo khung giờ: ${tiktokScheduleConfig.postHours.map(h => h + 'h').join(', ')} mỗi ngày.`);
+    startTikTokScheduleChecker();
   } else {
     addLog('warning', '🔴 Đã TẮT đăng TikTok tự động.');
-    if (tiktokScheduleTimer) clearTimeout(tiktokScheduleTimer);
-    tiktokScheduleState.nextRunTime = null;
+    stopTikTokScheduleChecker();
     tiktokScheduleState.currentStatus = 'Đã tạm dừng';
   }
   res.json({
@@ -418,14 +415,16 @@ app.post('/api/tiktok/schedule/toggle', (req, res) => {
 });
 
 app.post('/api/tiktok/schedule/config', (req, res) => {
-  const { intervalSeconds } = req.body;
-  if (intervalSeconds !== undefined) {
-    tiktokScheduleConfig.intervalSeconds = Math.max(60, parseInt(intervalSeconds, 10));
+  const { postHours } = req.body;
+  if (Array.isArray(postHours)) {
+    const cleaned = postHours
+      .map(h => parseInt(h, 10))
+      .filter(h => Number.isInteger(h) && h >= 0 && h <= 23);
+    if (cleaned.length > 0) {
+      tiktokScheduleConfig.postHours = [...new Set(cleaned)].sort((a, b) => a - b);
+    }
   }
-  addLog('info', `⚙️ Đã cập nhật chu kỳ đăng TikTok tự động: ${tiktokScheduleConfig.intervalSeconds}s.`);
-  if (tiktokScheduleConfig.enabled && !tiktokScheduleState.isProcessing) {
-    scheduleTikTokNextRun();
-  }
+  addLog('info', `⚙️ Đã cập nhật khung giờ đăng TikTok tự động: ${tiktokScheduleConfig.postHours.map(h => h + 'h').join(', ')}.`);
   res.json({ success: true, config: tiktokScheduleConfig, state: tiktokScheduleState });
 });
 
@@ -912,56 +911,77 @@ async function executeScheduledRun() {
   }
 }
 
-// ================= HỆ THỐNG LẬP LỊCH ĐĂNG TIKTOK TỰ ĐỘNG (TÁCH RIÊNG) =================
+// ================= HỆ THỐNG LẬP LỊCH ĐĂNG TIKTOK TỰ ĐỘNG THEO KHUNG GIỜ (TÁCH RIÊNG) =================
 
-function scheduleTikTokNextRun(delayMs = null) {
-  if (tiktokScheduleTimer) {
-    clearTimeout(tiktokScheduleTimer);
-    tiktokScheduleTimer = null;
-  }
+const pad2 = (n) => String(n).padStart(2, '0');
 
-  if (!tiktokScheduleConfig.enabled) {
-    tiktokScheduleState.nextRunTime = null;
-    tiktokScheduleState.currentStatus = 'Đã tạm dừng';
-    return;
-  }
-
-  const waitMs = delayMs !== null ? delayMs : (tiktokScheduleConfig.intervalSeconds * 1000);
-  tiktokScheduleState.nextRunTime = Date.now() + waitMs;
-  tiktokScheduleState.currentStatus = `Chờ đợt đăng tiếp theo (${Math.round(waitMs / 1000)}s)...`;
-
-  tiktokScheduleTimer = setTimeout(executeTikTokScheduledRun, waitMs);
+// Khoá định danh duy nhất cho 1 khung giờ trong 1 ngày cụ thể, dùng để tránh đăng trùng nếu bộ
+// đếm kiểm tra trúng khung giờ đó nhiều lần (mỗi 30s) trước khi sang giờ kế tiếp.
+function slotKeyFor(date, hour) {
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}-${pad2(hour)}`;
 }
 
-async function executeTikTokScheduledRun() {
+function secondsUntilNextTikTokSlot() {
+  if (!tiktokScheduleConfig.postHours || tiktokScheduleConfig.postHours.length === 0) return null;
+  const now = new Date();
+  const sorted = [...tiktokScheduleConfig.postHours].sort((a, b) => a - b);
+  for (const h of sorted) {
+    const candidate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, 0, 0, 0);
+    if (candidate.getTime() > now.getTime()) {
+      return Math.round((candidate.getTime() - now.getTime()) / 1000);
+    }
+  }
+  // Hết khung giờ hôm nay -> khung giờ đầu tiên của ngày mai
+  const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, sorted[0], 0, 0, 0);
+  return Math.round((tomorrow.getTime() - now.getTime()) / 1000);
+}
+
+function startTikTokScheduleChecker() {
+  if (tiktokScheduleCheckInterval) return; // đã chạy rồi, không tạo thêm interval
+  tiktokScheduleState.currentStatus = 'Đang chờ khung giờ đăng tiếp theo...';
+  tiktokScheduleCheckInterval = setInterval(checkTikTokScheduleSlot, 30000); // kiểm tra mỗi 30s
+  checkTikTokScheduleSlot(); // kiểm tra ngay khi vừa bật, phòng trường hợp bật đúng lúc trong khung giờ
+}
+
+function stopTikTokScheduleChecker() {
+  if (tiktokScheduleCheckInterval) {
+    clearInterval(tiktokScheduleCheckInterval);
+    tiktokScheduleCheckInterval = null;
+  }
+}
+
+async function checkTikTokScheduleSlot() {
   if (!tiktokScheduleConfig.enabled) return;
   if (tiktokScheduleState.isProcessing) return;
 
+  const now = new Date();
+  const currentHour = now.getHours();
+  if (!tiktokScheduleConfig.postHours.includes(currentHour)) return;
+
+  const slotKey = slotKeyFor(now, currentHour);
+  if (tiktokScheduleState.lastPostedKey === slotKey) return; // khung giờ này đã xử lý rồi, bỏ qua
+
   tiktokScheduleState.isProcessing = true;
   tiktokScheduleState.lastRunTime = Date.now();
-  tiktokScheduleState.currentStatus = 'Đang quét hàng "Chờ Đăng" trên Google Sheet...';
+  tiktokScheduleState.currentStatus = `Đang đăng video cho khung giờ ${currentHour}h...`;
 
   try {
     // runTikTokWorker tự tìm hàng "Chờ Đăng" cũ nhất và đăng đúng 1 video mỗi lần gọi — KHÔNG
     // bao giờ tạo video mới, chỉ đăng video đã có sẵn, đúng tách biệt với lịch tạo video.
     const result = await runTikTokWorker(addLog);
+    tiktokScheduleState.lastPostedKey = slotKey; // đánh dấu đã xử lý khung giờ này (dù có video hay không)
     if (result) {
       tiktokScheduleState.totalPostedSession++;
-      tiktokScheduleState.currentStatus = 'Vừa đăng xong 1 video.';
+      tiktokScheduleState.currentStatus = `Đã đăng xong video cho khung giờ ${currentHour}h.`;
     } else {
-      tiktokScheduleState.currentStatus = 'Không có video nào đang "Chờ Đăng".';
+      tiktokScheduleState.currentStatus = `Khung giờ ${currentHour}h: không có video nào đang "Chờ Đăng".`;
     }
   } catch (err) {
     addLog('error', `[TikTok Schedule] Lỗi: ${err.message}`);
     tiktokScheduleState.currentStatus = `Lỗi: ${err.message}`;
+    tiktokScheduleState.lastPostedKey = slotKey; // vẫn đánh dấu để tránh thử lại dồn dập trong cùng giờ
   } finally {
     tiktokScheduleState.isProcessing = false;
-
-    if (tiktokScheduleConfig.enabled) {
-      scheduleTikTokNextRun();
-    } else {
-      tiktokScheduleState.currentStatus = 'Đã tạm dừng';
-    }
   }
 }
 

@@ -522,6 +522,15 @@
             </div>
           </div>
 
+          <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 0 0 16px 0;">
+            <span style="font-size: 0.85rem; color: var(--text-muted);">Khung giờ đăng tự động mỗi ngày (giờ, 0-23):</span>
+            <input type="number" id="tiktokHour1" min="0" max="23" value="7" style="width: 60px;" class="input-sm">
+            <input type="number" id="tiktokHour2" min="0" max="23" value="11" style="width: 60px;" class="input-sm">
+            <input type="number" id="tiktokHour3" min="0" max="23" value="17" style="width: 60px;" class="input-sm">
+            <input type="number" id="tiktokHour4" min="0" max="23" value="23" style="width: 60px;" class="input-sm">
+            <button class="btn btn-ghost btn-sm" onclick="saveTikTokScheduleHours()">💾 Lưu khung giờ</button>
+          </div>
+
           <div class="table-responsive">
             <table class="data-table">
               <thead>

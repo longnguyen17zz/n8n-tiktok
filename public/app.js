@@ -373,10 +373,11 @@ async function fetchStatus() {
       `;
     }
 
-    // 4. Cập nhật trạng thái lịch đăng TikTok tự động (tách riêng khỏi lịch tạo video)
+    // 4. Cập nhật trạng thái lịch đăng TikTok tự động theo khung giờ (tách riêng khỏi lịch tạo video)
     if (data.tiktokSchedule) {
       const tEnabled = data.tiktokSchedule.config.enabled;
       const tProcessing = data.tiktokSchedule.state.isProcessing;
+      const postHours = data.tiktokSchedule.config.postHours || [];
       const btnText = document.getElementById('btnTiktokScheduleText');
       const btnToggle = document.getElementById('btnTiktokScheduleToggle');
       const detailText = document.getElementById('tiktokScheduleDetailText');
@@ -393,13 +394,27 @@ async function fetchStatus() {
         }
       }
 
+      // Đồng bộ 4 ô nhập khung giờ, chỉ khi người dùng không đang gõ dở
+      const hourIds = ['tiktokHour1', 'tiktokHour2', 'tiktokHour3', 'tiktokHour4'];
+      hourIds.forEach((id, idx) => {
+        const el = document.getElementById(id);
+        if (el && !el.matches(':focus') && postHours[idx] !== undefined) {
+          el.value = postHours[idx];
+        }
+      });
+
       if (detailText) {
+        const hoursTxt = postHours.map(h => `${h}h`).join(', ');
         if (!tEnabled) {
-          detailText.textContent = 'Đăng TikTok tự động: Đã tắt — chỉ đăng khi bạn tự bấm từng video.';
+          detailText.textContent = `Đăng TikTok tự động: Đã tắt — khung giờ đã lưu: ${hoursTxt}.`;
         } else {
           const sec = data.tiktokSchedule.state.secondsUntilNextRun;
-          const waitTxt = (sec !== null && sec !== undefined && !tProcessing) ? ` • Lần đăng tiếp theo sau ${sec}s` : '';
-          detailText.textContent = `Đăng TikTok tự động: Đang bật (chu kỳ ${data.tiktokSchedule.config.intervalSeconds}s) • ${data.tiktokSchedule.state.currentStatus || ''}${waitTxt} • Đã đăng ${data.tiktokSchedule.state.totalPostedSession || 0} video phiên này.`;
+          let waitTxt = '';
+          if (sec !== null && sec !== undefined && !tProcessing) {
+            const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
+            waitTxt = ` • Lần đăng tiếp theo sau ${h > 0 ? h + 'h' : ''}${m}p`;
+          }
+          detailText.textContent = `Đăng TikTok tự động: Đang bật (${hoursTxt}) • ${data.tiktokSchedule.state.currentStatus || ''}${waitTxt} • Đã đăng ${data.tiktokSchedule.state.totalPostedSession || 0} video phiên này.`;
         }
       }
     }
@@ -434,6 +449,32 @@ async function toggleTikTokSchedule() {
     fetchLogs();
   } catch (err) {
     alert('Không kết nối được server để bật/tắt đăng TikTok tự động: ' + err.message);
+  }
+}
+
+async function saveTikTokScheduleHours() {
+  const ids = ['tiktokHour1', 'tiktokHour2', 'tiktokHour3', 'tiktokHour4'];
+  const postHours = ids
+    .map(id => document.getElementById(id))
+    .filter(Boolean)
+    .map(el => parseInt(el.value, 10))
+    .filter(h => Number.isInteger(h) && h >= 0 && h <= 23);
+
+  if (postHours.length === 0) {
+    alert('Vui lòng nhập ít nhất 1 khung giờ hợp lệ (0-23).');
+    return;
+  }
+
+  try {
+    await fetch(`${API_BASE}/api/tiktok/schedule/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ postHours })
+    });
+    fetchStatus();
+    fetchLogs();
+  } catch (err) {
+    alert('Không lưu được khung giờ: ' + err.message);
   }
 }
 
