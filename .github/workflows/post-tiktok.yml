@@ -1,12 +1,18 @@
 name: 2. Tự Động Đăng TikTok (Lên Lịch hoặc Bấm Nút)
 
 on:
-  # Lịch tự động đăng 2 lần/ngày ĐÃ TẮT theo yêu cầu — chỉ còn đăng bằng tay qua workflow_dispatch.
-  # Muốn bật lại: bỏ comment 2 dòng dưới.
-  # schedule:
-  #   # Giờ VN: 11:30 trưa & 19:30 tối | 11:30 VN = 04:30 UTC | 19:30 VN = 12:30 UTC
-  #   - cron: '30 4,12 * * *'
-  workflow_dispatch: # Nút bấm để bạn đăng ngay lập tức bằng tay bất cứ lúc nào
+  schedule:
+    # Đăng theo 4 KHUNG GIỜ CỐ ĐỊNH mỗi ngày (giờ VN): 7h, 11h, 17h, 23h.
+    # GitHub Actions cron có thể bị TRỄ vài phút đến vài giờ tuỳ tải hệ thống (không đảm bảo đúng
+    # giây/phút), nên mỗi khung giờ được bắn LẶP LẠI 5 lần (phút 0,5,10,15,20 sau mỗi mốc giờ) để
+    # tăng cơ hội có ít nhất 1 lần chạy sát giờ thật. src/tiktok-scheduler.js tự kiểm tra đã đăng
+    # cho khung giờ đó chưa (qua file trạng thái), nên dù chạy nhiều lần vẫn chỉ đăng ĐÚNG 1 video.
+    # 7h VN=0h UTC | 11h VN=4h UTC | 17h VN=10h UTC | 23h VN=16h UTC
+    - cron: '0,5,10,15,20 0,4,10,16 * * *'
+  workflow_dispatch: # Nút bấm để bạn đăng ngay lập tức bằng tay bất cứ lúc nào (bỏ qua kiểm tra khung giờ)
+
+permissions:
+  contents: write # Cần quyền ghi để commit lại file trạng thái khung giờ đã đăng
 
 jobs:
   post-tiktok:
@@ -26,7 +32,7 @@ jobs:
       - name: Install Dependencies
         run: npm install --omit=dev
 
-      - name: Post Next Video to TikTok
+      - name: Post Next Video to TikTok (theo khung giờ, workflow_dispatch luôn đăng ngay)
         env:
           SHEET_DOCUMENT_ID: ${{ secrets.SHEET_DOCUMENT_ID }}
           DRIVE_OUTPUT_FOLDER_ID: ${{ secrets.DRIVE_OUTPUT_FOLDER_ID }}
@@ -36,6 +42,23 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           TIKTOK_SESSION_JSON: ${{ secrets.TIKTOK_SESSION_JSON }}
-          TIKTOK_AUTO_PUBLISH: 'true'
           TIKTOK_PROXY_URL: ${{ secrets.TIKTOK_PROXY_URL }}
-        run: node src/index.js --post-tiktok
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            node src/index.js --post-tiktok
+          else
+            node src/tiktok-scheduler.js
+          fi
+
+      - name: Lưu lại trạng thái khung giờ đã đăng (chỉ khi chạy theo lịch)
+        if: github.event_name == 'schedule'
+        run: |
+          if [ -n "$(git status --porcelain .tiktok-schedule-state.json)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add .tiktok-schedule-state.json
+            git commit -m "chore: cập nhật trạng thái khung giờ đăng TikTok [skip ci]"
+            git push
+          else
+            echo "Không có thay đổi trạng thái để lưu."
+          fi
