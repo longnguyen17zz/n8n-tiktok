@@ -88,8 +88,12 @@ async function main() {
 import { fileURLToPath } from 'url';
 const isDirectRun = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
 if (isDirectRun) {
-  main().catch(err => {
-    console.error('[TikTok Scheduler] Lỗi:', err.message);
-    process.exit(1);
-  });
+  // process.exit(0) rõ ràng sau khi xong — nếu không, 1 handle đang mở đâu đó có thể giữ Node sống
+  // tới khi GitHub Actions timeout 15 phút rồi mới bị huỷ, dù việc đăng đã xong từ lâu.
+  main()
+    .then(() => process.exit(0))
+    .catch(err => {
+      console.error('[TikTok Scheduler] Lỗi:', err.message);
+      process.exit(1);
+    });
 }

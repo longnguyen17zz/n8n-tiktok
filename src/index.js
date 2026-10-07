@@ -505,12 +505,16 @@ const __filename = fileURLToPath(import.meta.url);
 const isDirectRun = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(__filename);
 if (isDirectRun) {
   const arg = process.argv[2] || '';
+  // process.exit() sau khi xong việc — nếu không, 1 handle đang mở đâu đó (axios keep-alive, client
+  // googleapis, v.v.) có thể giữ Node sống tới khi GitHub Actions timeout 15 phút rồi mới bị huỷ,
+  // dù việc đăng/tạo video thực tế đã xong từ lâu (đã xác nhận qua lần chạy thật trên CI).
+  const exitOnSettle = (p) => p.then(() => process.exit(0)).catch((e) => { console.error(e); process.exit(1); });
   if (arg === '--post-tiktok' || arg === 'post') {
-    runTikTokWorker().catch(console.error);
+    exitOnSettle(runTikTokWorker());
   } else if (arg === '--generate' || arg === 'generate') {
-    runGenerateWorker().catch(console.error);
+    exitOnSettle(runGenerateWorker());
   } else {
-    runWorker().catch(console.error);
+    exitOnSettle(runWorker());
   }
 }
 
