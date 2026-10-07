@@ -96,10 +96,11 @@ export async function fetchQueueRows(limit = 20) {
 
 // Lấy các hàng đã có video thành phẩm (dùng cho trang riêng "Đăng TikTok"),
 // mới nhất lên trước, không phụ thuộc cột "Trạng Thái" (khác với fetchQueueRows).
-// Toàn bộ sheet đã được tải về trong 1 lần gọi API bên dưới (không tốn thêm request nào khi
-// tăng limit) — limit mặc định cao để khi trang UI lọc theo "Chờ Đăng" ở client, nó không bị
-// bỏ sót các hàng chờ đăng nằm xa hơn 30 hàng gần nhất (vốn có thể toàn hàng "Đã Đăng").
-export async function fetchTikTokQueueRows(limit = 300) {
+// Toàn bộ sheet đã được tải về trong 1 lần gọi API bên dưới (chỉ 1 request duy nhất dù sheet có
+// bao nhiêu dòng) — mặc định KHÔNG giới hạn số lượng item trả về, để không bao giờ bỏ sót các hàng
+// "Chờ Đăng" nằm xa hơn N hàng gần nhất (từng gây bug: hàng mới nhất toàn "Đã Đăng" nên limit nhỏ
+// làm ẩn mất các hàng chờ đăng cũ hơn). Chỉ truyền limit khi thực sự cần giới hạn (vd. UI phân trang).
+export async function fetchTikTokQueueRows(limit = Infinity) {
   const auth = getAuth();
   const sheets = google.sheets({ version: 'v4', auth });
 

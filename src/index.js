@@ -429,9 +429,9 @@ export async function runTikTokWorker(logger = (level, msg) => console.log(`[${l
     return null;
   }
 
-  // Quét đủ 300 dòng (toàn bộ sheet, 1 lần gọi API duy nhất, miễn phí) thay vì chỉ 50 dòng MỚI NHẤT —
-  // nếu các dòng mới nhất đã "Đã Đăng" hết, limit nhỏ sẽ bỏ sót hoàn toàn các video "Chờ Đăng" cũ hơn.
-  const tiktokQueue = await Google.fetchTikTokQueueRows(300);
+  // Không truyền limit — quét toàn bộ sheet (1 lần gọi API duy nhất, không tốn thêm chi phí) để
+  // không bao giờ bỏ sót video "Chờ Đăng" cũ hơn N hàng gần nhất.
+  const tiktokQueue = await Google.fetchTikTokQueueRows();
   const pendingList = tiktokQueue
     .filter(r => (r['Trạng Thái upload'] || '').trim() === 'Chờ Đăng' && (r['Link Video'] || '').trim())
     .sort((a, b) => (a.rowNumber || 0) - (b.rowNumber || 0)); // Đăng theo thứ tự từ trên xuống dưới
