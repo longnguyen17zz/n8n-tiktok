@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import sharp from 'sharp';
 import axios from 'axios';
+import FormData from 'form-data';
 import { fileURLToPath } from 'url';
 import { CONFIG } from './config.js';
 import * as Google from './google.js';
@@ -24,6 +25,68 @@ export async function sendTelegram(msg) {
     console.log('📱 Đã gửi thông báo Telegram thành công.');
   } catch (err) {
     console.error('Telegram gửi lỗi:', err.message);
+  }
+}
+
+/**
+ * Gửi video + caption qua Telegram để NGƯỜI DÙNG tự đăng tay bằng app TikTok thật — tránh đăng qua
+ * API ngầm (dễ bị TikTok âm thầm giảm phát tán dẫn tới 0 view). Caption được gửi riêng trong khối
+ * code (```...```) để bấm giữ/copy trên điện thoại là lấy trọn vẹn, dán thẳng vào ô caption TikTok.
+ */
+export async function sendForManualTikTokPost({ videoPathOrUrl, caption, productId, productName, cartDetail, stt, logger = (l, m) => console.log(`[${l}] ${m}`) }) {
+  if (!CONFIG.TELEGRAM_BOT_TOKEN) {
+    throw new Error('Chưa cấu hình TELEGRAM_BOT_TOKEN, không thể gửi video để đăng tay.');
+  }
+
+  const tempDir = path.resolve('temp');
+  fs.mkdirSync(tempDir, { recursive: true });
+
+  let localVideoPath = videoPathOrUrl;
+  let tempDownloaded = false;
+
+  if (videoPathOrUrl.startsWith('http') || !fs.existsSync(videoPathOrUrl)) {
+    const driveId = Google.extractDriveFileId(videoPathOrUrl);
+    if (!driveId) {
+      throw new Error(`Không tìm thấy file video hợp lệ từ đường dẫn: ${videoPathOrUrl}`);
+    }
+    logger('info', `📥 Đang tải video từ Google Drive (ID: ${driveId}) để gửi qua Telegram...`);
+    localVideoPath = path.join(tempDir, `telegram_manual_${Date.now()}_${driveId}.mp4`);
+    const videoBuffer = await Google.downloadFileAsBase64(driveId);
+    fs.writeFileSync(localVideoPath, videoBuffer);
+    tempDownloaded = true;
+  }
+
+  try {
+    const form = new FormData();
+    form.append('chat_id', CONFIG.TELEGRAM_CHAT_ID);
+    form.append('caption', `🟡 Video sẵn sàng — bài ${stt} (${productName})\n👉 Giỏ hàng: ${cartDetail}\n\n⬇️ Caption để dán ở tin nhắn tiếp theo (bấm giữ để copy)`);
+    form.append('video', fs.createReadStream(localVideoPath), { filename: path.basename(localVideoPath) });
+
+    await axios.post(`https://api.telegram.org/bot${CONFIG.TELEGRAM_BOT_TOKEN}/sendVideo`, form, {
+      headers: form.getHeaders(),
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity
+    });
+
+    if (productId) {
+      await axios.post(`https://api.telegram.org/bot${CONFIG.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+        chat_id: CONFIG.TELEGRAM_CHAT_ID,
+        text: `🏷️ ID sản phẩm (bấm giữ để copy, dán vào ô tìm sản phẩm khi gắn giỏ hàng):\n` + '```\n' + productId + '\n```',
+        parse_mode: 'Markdown'
+      });
+    }
+
+    await axios.post(`https://api.telegram.org/bot${CONFIG.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      chat_id: CONFIG.TELEGRAM_CHAT_ID,
+      text: '```\n' + caption + '\n```',
+      parse_mode: 'Markdown'
+    });
+
+    logger('success', '📱 Đã gửi video + ID sản phẩm + caption qua Telegram để đăng tay.');
+  } finally {
+    if (tempDownloaded && fs.existsSync(localVideoPath)) {
+      try { fs.unlinkSync(localVideoPath); } catch (e) {}
+    }
   }
 }
 
@@ -122,6 +185,44 @@ export async function triggerTikTokUpload(row, logger = (level, msg) => console.
   const rawName = (row['Tên Hiển Thị Sản Phẩm'] || row['Tên Sản Phẩm'] || 'Mua ngay').trim();
   const productName = rawName.slice(0, 30) || 'Mua ngay';
 
+  const stt = row.STT || row.rowNumber;
+  let cartDetail = productId ? `${productName} [${productId}]` : 'Không có';
+
+  // CHẾ ĐỘ MẶC ĐỊNH (manual): gửi video + caption qua Telegram để tự đăng tay bằng app TikTok thật,
+  // KHÔNG gọi API đăng ngầm (tránh bị TikTok giảm phát tán do IP datacenter lệch vùng). Xem
+  // CONFIG.TIKTOK_POST_MODE trong config.js để bật lại chế độ 'auto' (đăng thẳng như cũ) nếu cần.
+  if (CONFIG.TIKTOK_POST_MODE !== 'auto') {
+    try {
+      await sendForManualTikTokPost({ videoPathOrUrl: videoUrl, caption, productId, productName, cartDetail, stt, logger });
+
+      if (CONFIG.GOOGLE_SERVICE_ACCOUNT_JSON) {
+        try {
+          await Google.updateRowStatus(row.rowNumber, 'Thành Công', {
+            'Trạng Thái upload': 'Chờ Đăng Tay',
+            'Note': new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour12: false })
+          });
+          logger('success', `📝 Đã cập nhật [Trạng Thái upload]: "Chờ Đăng Tay" trên Google Sheet cho hàng #${row.rowNumber}.`);
+        } catch (sheetErr) {
+          logger('warning', `Lỗi cập nhật Google Sheet: ${sheetErr.message}`);
+        }
+      }
+
+      logger('success', `✨ Đã gửi bài #${row.rowNumber} qua Telegram, chờ bạn đăng tay!`);
+      return { success: true, manual: true };
+    } catch (err) {
+      logger('error', `❌ Gửi Telegram để đăng tay cho hàng #${row.rowNumber} thất bại: ${err.message}`);
+      if (CONFIG.GOOGLE_SERVICE_ACCOUNT_JSON) {
+        try {
+          await Google.updateRowStatus(row.rowNumber, row['Trạng Thái'] || 'Thành Công', {
+            'Trạng Thái upload': 'Chờ Đăng',
+            'Note': `Lỗi gửi Telegram: ${err.message}`
+          });
+        } catch (e) {}
+      }
+      throw err;
+    }
+  }
+
   // Cập nhật Google Sheet sang "Đang Đăng"
   if (CONFIG.GOOGLE_SERVICE_ACCOUNT_JSON) {
     try {
@@ -158,8 +259,6 @@ export async function triggerTikTokUpload(row, logger = (level, msg) => console.
     }
 
     // 3. Gửi thông báo Telegram (giống hệt node Tele của n8n)
-    const stt = row.STT || row.rowNumber;
-    let cartDetail = productId ? `${productName} [${productId}]` : 'Không có';
     if (result.showcaseStatus) {
       if (result.showcaseStatus.inStock === false) {
         cartDetail += `\n⚠️ CẢNH BÁO: Sản phẩm HẾT HÀNG (tồn kho: 0), TikTok có thể ẩn giỏ vàng!`;
@@ -424,7 +523,7 @@ export async function runTikTokWorker(logger = (level, msg) => console.log(`[${l
     return null;
   }
 
-  if (!isTikTokConfigured()) {
+  if (CONFIG.TIKTOK_POST_MODE === 'auto' && !isTikTokConfigured()) {
     logger('error', '❌ Chưa cấu hình TIKTOK_SESSION_JSON hợp lệ.');
     return null;
   }

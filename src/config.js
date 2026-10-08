@@ -33,6 +33,9 @@ export const CONFIG = {
   N8N_TIKTOK_WEBHOOK_URL: process.env.N8N_TIKTOK_WEBHOOK_URL || '',
   TIKTOK_SESSION_JSON: decodeTikTokSession(process.env.TIKTOK_SESSION_JSON),
   TIKTOK_PROXY_URL: process.env.TIKTOK_PROXY_URL || '',
-  TIKTOK_AUTO_PUBLISH: process.env.TIKTOK_AUTO_PUBLISH === 'true'
+  TIKTOK_AUTO_PUBLISH: process.env.TIKTOK_AUTO_PUBLISH === 'true',
+  // 'manual' (mặc định): gửi video + caption qua Telegram để tự đăng tay bằng app TikTok thật (tránh
+  // bị giảm phát tán do đăng qua API ngầm từ IP datacenter). 'auto': đăng thẳng qua TikTok Engine như cũ.
+  TIKTOK_POST_MODE: process.env.TIKTOK_POST_MODE || 'manual'
 };
 
