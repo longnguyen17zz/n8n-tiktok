@@ -2054,6 +2054,112 @@ code {
   }
 }
 
+/* ========================================================
+   MÀN HÌNH ĐĂNG NHẬP LICENSE KEY
+   ======================================================== */
+.login-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--bg-app);
+  background-image:
+    radial-gradient(circle at 15% 15%, rgba(99, 102, 241, 0.16) 0%, transparent 40%),
+    radial-gradient(circle at 85% 85%, rgba(217, 70, 239, 0.14) 0%, transparent 40%);
+  padding: 16px;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 380px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-xl);
+  padding: 32px 28px;
+  text-align: center;
+  backdrop-filter: blur(16px);
+  box-shadow: var(--shadow-sm);
+}
+
+.login-brand-icon {
+  margin: 0 auto 16px;
+  width: 52px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-lg);
+  background: var(--grad-primary);
+  color: #fff;
+}
+
+.login-card h2 {
+  font-size: 1.3rem;
+  margin-bottom: 6px;
+}
+
+.login-subtitle {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  margin-bottom: 22px;
+}
+
+.login-input {
+  width: 100%;
+  background: var(--bg-input);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+  color: var(--text-main);
+  padding: 12px 14px;
+  font-size: 0.95rem;
+  text-align: center;
+  letter-spacing: 1px;
+  font-family: var(--font-mono);
+  margin-bottom: 14px;
+}
+
+.login-input:focus {
+  outline: none;
+  border-color: var(--border-active);
+}
+
+.login-submit {
+  width: 100%;
+  justify-content: center;
+}
+
+.login-error {
+  color: var(--accent-rose);
+  font-size: 0.82rem;
+  margin-top: 12px;
+}
+
+.login-hint {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  margin-top: 18px;
+}
+
+.btn-logout {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  transition: color 0.15s, background 0.15s;
+}
+
+.btn-logout:hover {
+  color: var(--accent-rose);
+  background: rgba(244, 63, 94, 0.1);
+}
+
 
 
 

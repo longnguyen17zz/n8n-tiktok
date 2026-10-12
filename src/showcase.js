@@ -2,19 +2,20 @@ import axios from 'axios';
 import { CONFIG } from './config.js';
 import { normalizeTikTokSession } from './tiktok.js';
 
-// Cache danh sách sản phẩm trong Showcase trong 5 phút để tránh gọi API liên tục khi chạy hàng loạt
-let showcaseCache = {
-  products: null,
-  total: 0,
-  lastFetchedAt: 0
-};
+// Cache danh sách sản phẩm Showcase theo TỪNG session TikTok riêng (key = session đã resolve) —
+// tránh account này vô tình thấy cache Showcase của account khác khi nhiều account dùng chung server.
+const showcaseCacheBySession = new Map();
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 phút
+
+function resolveSessionJson(sessionJson) {
+  return (sessionJson || CONFIG.TIKTOK_SESSION_JSON || '').trim();
+}
 
 /**
  * Trích xuất headers và cookies từ session TikTok
  */
 function getAuthContext(sessionJson) {
-  const rawSession = (sessionJson || CONFIG.TIKTOK_SESSION_JSON || '').trim();
+  const rawSession = resolveSessionJson(sessionJson);
   const validJson = normalizeTikTokSession(rawSession);
   if (!validJson) {
     throw new Error('Chưa cấu hình hoặc Session TikTok không hợp lệ.');
@@ -47,12 +48,14 @@ function getAuthContext(sessionJson) {
  * Lấy toàn bộ danh sách sản phẩm hiện có trong Showcase (Sàn trưng bày) của kênh
  */
 export async function getShowcaseProducts(sessionJson = null, forceRefresh = false) {
+  const effectiveSession = resolveSessionJson(sessionJson);
   const now = Date.now();
-  if (!forceRefresh && showcaseCache.products && (now - showcaseCache.lastFetchedAt < CACHE_TTL_MS)) {
-    return showcaseCache.products;
+  const cached = showcaseCacheBySession.get(effectiveSession);
+  if (!forceRefresh && cached && (now - cached.lastFetchedAt < CACHE_TTL_MS)) {
+    return cached.products;
   }
 
-  const { headers } = getAuthContext(sessionJson);
+  const { headers } = getAuthContext(effectiveSession);
   let offset = 0;
   let allProducts = [];
 
@@ -73,11 +76,11 @@ export async function getShowcaseProducts(sessionJson = null, forceRefresh = fal
     if (offset >= (res.data.data?.total || 0)) break;
   }
 
-  showcaseCache = {
+  showcaseCacheBySession.set(effectiveSession, {
     products: allProducts,
     total: allProducts.length,
     lastFetchedAt: now
-  };
+  });
 
   return allProducts;
 }
@@ -90,7 +93,8 @@ export async function addProductToShowcase(productId, sessionJson = null) {
     throw new Error('Thiếu ID Sản Phẩm cần thêm vào Showcase.');
   }
 
-  const { headers } = getAuthContext(sessionJson);
+  const effectiveSession = resolveSessionJson(sessionJson);
+  const { headers } = getAuthContext(effectiveSession);
   const cleanId = String(productId).trim();
 
   const res = await axios.post('https://shop.tiktok.com/api/v1/streamer_desktop/showcase_product/add', {
@@ -101,8 +105,8 @@ export async function addProductToShowcase(productId, sessionJson = null) {
   });
 
   if (res.data?.code === 0) {
-    // Xóa cache để lần gọi tiếp theo làm mới danh sách
-    showcaseCache.lastFetchedAt = 0;
+    // Xóa cache của đúng session này để lần gọi tiếp theo làm mới danh sách
+    showcaseCacheBySession.delete(effectiveSession);
     return {
       success: true,
       message: 'Thêm vào Showcase thành công',

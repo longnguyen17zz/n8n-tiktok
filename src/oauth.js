@@ -1,10 +1,10 @@
 import { google } from 'googleapis';
 import fs from 'fs';
-import path from 'path';
 import { CONFIG } from './config.js';
+import { getAccountDriveTokens, saveAccountDriveTokens } from './accounts.js';
 
-const TOKENS_FILE = path.resolve('google_tokens.json');
-
+// Mỗi account tự "Đăng nhập Drive (OAuth)" và kết nối Drive riêng của họ — token lưu trong cột
+// accounts.drive_oauth_tokens_json (DB) thay vì 1 file google_tokens.json dùng chung như trước.
 export function getOAuth2Client() {
   if (!CONFIG.GOOGLE_CLIENT_ID || !CONFIG.GOOGLE_CLIENT_SECRET) {
     return null;
@@ -35,7 +35,7 @@ export function getAuthUrl() {
   });
 }
 
-export async function handleCallback(code) {
+export async function handleCallback(code, accountId) {
   const client = getOAuth2Client();
   if (!client) throw new Error('OAuth2 client chưa được cấu hình.');
 
@@ -56,51 +56,37 @@ export async function handleCallback(code) {
     updatedAt: new Date().toISOString()
   };
 
-  fs.writeFileSync(TOKENS_FILE, JSON.stringify(dataToSave, null, 2));
+  await saveAccountDriveTokens(accountId, dataToSave);
   return dataToSave;
 }
 
-export function getOAuthStatus() {
+export async function getOAuthStatus(accountId) {
   const hasConfig = !!(CONFIG.GOOGLE_CLIENT_ID && CONFIG.GOOGLE_CLIENT_SECRET);
-  if (!fs.existsSync(TOKENS_FILE)) {
-    return {
-      connected: false,
-      hasConfig,
-      email: null
-    };
+  const data = accountId ? await getAccountDriveTokens(accountId) : null;
+
+  if (!data) {
+    return { connected: false, hasConfig, email: null };
   }
 
-  try {
-    const data = JSON.parse(fs.readFileSync(TOKENS_FILE, 'utf-8'));
-    return {
-      connected: !!(data && data.tokens && data.tokens.refresh_token),
-      hasConfig,
-      email: data.email || 'Tài khoản Google đã kết nối',
-      updatedAt: data.updatedAt
-    };
-  } catch (e) {
-    return {
-      connected: false,
-      hasConfig,
-      email: null
-    };
-  }
+  return {
+    connected: !!(data.tokens && data.tokens.refresh_token),
+    hasConfig,
+    email: data.email || 'Tài khoản Google đã kết nối',
+    updatedAt: data.updatedAt
+  };
 }
 
-export function disconnectOAuth() {
-  if (fs.existsSync(TOKENS_FILE)) {
-    fs.unlinkSync(TOKENS_FILE);
-  }
+export async function disconnectOAuth(accountId) {
+  await saveAccountDriveTokens(accountId, null);
   return { success: true };
 }
 
-export async function getAuthenticatedDriveClient() {
-  if (!fs.existsSync(TOKENS_FILE)) return null;
+export async function getAuthenticatedDriveClient(accountId) {
+  if (!accountId) return null;
+  const data = await getAccountDriveTokens(accountId);
+  if (!data || !data.tokens) return null;
 
   try {
-    const data = JSON.parse(fs.readFileSync(TOKENS_FILE, 'utf-8'));
-    if (!data.tokens) return null;
-
     const client = getOAuth2Client();
     if (!client) return null;
 
@@ -108,9 +94,9 @@ export async function getAuthenticatedDriveClient() {
 
     // Tự động lưu refresh token mới nếu được cấp lại
     client.on('tokens', (newTokens) => {
-      const current = JSON.parse(fs.readFileSync(TOKENS_FILE, 'utf-8'));
-      current.tokens = { ...current.tokens, ...newTokens };
-      fs.writeFileSync(TOKENS_FILE, JSON.stringify(current, null, 2));
+      getAccountDriveTokens(accountId)
+        .then(current => saveAccountDriveTokens(accountId, { ...(current || data), tokens: { ...(current || data).tokens, ...newTokens } }))
+        .catch(e => console.error('Lỗi lưu refresh token mới:', e.message));
     });
 
     return google.drive({ version: 'v3', auth: client });
@@ -121,14 +107,14 @@ export async function getAuthenticatedDriveClient() {
 }
 
 /**
- * Upload video trực tiếp bằng tài khoản Google đã đăng nhập OAuth2
+ * Upload video trực tiếp bằng tài khoản Google đã đăng nhập OAuth2 của account
  */
-export async function uploadVideoViaOAuth(filePath, fileName, folderId = CONFIG.DRIVE_OUTPUT_FOLDER_ID) {
+export async function uploadVideoViaOAuth(filePath, fileName, accountId, folderId) {
   if (!fs.existsSync(filePath) || fs.statSync(filePath).size < 1000) {
     throw new Error(`File video rỗng hoặc không tồn tại, không thể tải lên Drive: ${filePath}`);
   }
 
-  const drive = await getAuthenticatedDriveClient();
+  const drive = await getAuthenticatedDriveClient(accountId);
   if (!drive) {
     throw new Error('Chưa đăng nhập Google Drive OAuth2.');
   }

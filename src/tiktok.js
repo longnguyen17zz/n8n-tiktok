@@ -94,8 +94,8 @@ export function normalizeTikTokSession(raw) {
 /**
  * Kiểm tra xem cấu hình TikTok session có hợp lệ không
  */
-export function isTikTokConfigured() {
-  return !!normalizeTikTokSession(CONFIG.TIKTOK_SESSION_JSON);
+export function isTikTokConfigured(sessionJson) {
+  return !!normalizeTikTokSession(sessionJson || CONFIG.TIKTOK_SESSION_JSON);
 }
 
 /**
@@ -111,7 +111,8 @@ export async function uploadVideoToTikTok({
   visibilityType = 0, // 0: Public, 1: Private, 2: Friends
   allowComment = 1,
   scheduleTime = 0,
-  logger = (level, msg) => console.log(`[${level}] ${msg}`)
+  logger = (level, msg) => console.log(`[${level}] ${msg}`),
+  cfg = CONFIG
 }) {
   if (!tikTokInstance) {
     throw new Error('TikTok Engine chưa được khởi tạo thành công.');
@@ -135,7 +136,7 @@ export async function uploadVideoToTikTok({
     if (driveId) {
       logger('info', `📥 Đang tải video từ Google Drive (ID: ${driveId}) để chuẩn bị đăng TikTok...`);
       localVideoPath = path.join(tempDir, `tiktok_upload_${Date.now()}_${driveId}.mp4`);
-      const videoBuffer = await Google.downloadFileAsBase64(driveId);
+      const videoBuffer = await Google.downloadFileAsBase64(driveId, cfg);
       fs.writeFileSync(localVideoPath, videoBuffer);
       tempDownloaded = true;
       logger('success', `Đã tải video tạm về: ${path.basename(localVideoPath)} (${(videoBuffer.length / (1024 * 1024)).toFixed(2)} MB)`);

@@ -120,8 +120,8 @@ bottomNavItems.forEach(item => {
   });
 });
 
-// Handle hash URL
-window.addEventListener('load', () => {
+// Khởi động app thật (dashboard, polling...) CHỈ sau khi xác nhận đã đăng nhập hợp lệ
+function startAppAfterLogin() {
   const hash = window.location.hash.replace('#', '');
   if (hash && titles[hash]) switchTab(hash);
   fetchStatus();
@@ -129,7 +129,9 @@ window.addEventListener('load', () => {
   fetchVideos();
   setInterval(fetchStatus, 4000);
   setInterval(fetchLogs, 3000);
-});
+}
+
+window.addEventListener('load', checkAuthAndInit);
 
 // 2. SCHEDULE & WORKER STATE
 let currentSchedule = null;
@@ -188,6 +190,7 @@ function updateCountdownDisplay() {
 async function fetchStatus() {
   try {
     const res = await fetch(`${API_BASE}/api/status`);
+    if (res.status === 401) { window.location.reload(); return; }
     const data = await res.json();
 
     // 1. Cập nhật Schedule State
@@ -556,6 +559,7 @@ function toggleTimeRangeInputs() {
 async function fetchLogs() {
   try {
     const res = await fetch(`${API_BASE}/api/logs`);
+    if (res.status === 401) { window.location.reload(); return; }
     const logs = await res.json();
 
     if (!logs || logs.length === 0) return;
@@ -723,12 +727,13 @@ async function fetchQueue() {
         </td>
         <td>
           <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+            ${canUseStudio ? `
             <button class="btn btn-primary btn-sm" onclick="runSingleQueueDirect(${item.rowNumber})" title="Chạy luồng tạo video đầy đủ: Render -> Drive -> Sheet -> Telegram">
               ▶ Chạy WF
             </button>
             <button class="btn btn-ghost btn-sm" onclick="runSingleQueue(${item.rowNumber})" title="Mở kịch bản trong Studio">
               Sửa
-            </button>
+            </button>` : `<span class="text-muted" style="font-size:0.8rem;">Chỉ xem</span>`}
           </div>
         </td>
       </tr>
@@ -1160,4 +1165,112 @@ async function disconnectGoogleDrive() {
   } catch (err) {
     alert('Lỗi: ' + err.message);
   }
+}
+
+// ========================================================
+// LICENSE KEY LOGIN / LOGOUT
+// ========================================================
+const loginScreenEl = document.getElementById('view-login');
+const appContainerEl = document.querySelector('.app-container');
+const loginForm = document.getElementById('loginForm');
+const loginLicenseKeyInput = document.getElementById('loginLicenseKey');
+const loginErrorEl = document.getElementById('loginError');
+const btnLoginSubmit = document.getElementById('btnLoginSubmit');
+const btnLogout = document.getElementById('btnLogout');
+const sidebarAccountLabel = document.getElementById('sidebarAccountLabel');
+const sidebarPlanLabel = document.getElementById('sidebarPlanLabel');
+
+function showLoginScreen() {
+  if (loginScreenEl) loginScreenEl.style.display = 'flex';
+  if (appContainerEl) appContainerEl.style.display = 'none';
+}
+
+let canUseStudio = false;
+
+// Engine Google Vids dùng chung 1 Chrome profile của chủ app — chỉ account được cấp quyền (mặc
+// định là account bootstrap của chủ app) mới thấy tab Studio & dùng được nút tạo video tự động.
+function applyStudioAccessUI() {
+  document.querySelectorAll('[data-tab="studio"]').forEach(el => {
+    el.style.display = canUseStudio ? '' : 'none';
+  });
+  if (btnToggleWorker) btnToggleWorker.style.display = canUseStudio ? '' : 'none';
+
+  const scheduleControlCard = document.getElementById('scheduleControlCard');
+  const queueStudioDisabledNote = document.getElementById('queueStudioDisabledNote');
+  if (scheduleControlCard) scheduleControlCard.style.display = canUseStudio ? '' : 'none';
+  if (queueStudioDisabledNote) queueStudioDisabledNote.style.display = canUseStudio ? 'none' : 'block';
+
+  // Nếu đang ở tab Studio mà không có quyền (vd gõ thẳng #studio trên URL) -> chuyển về Dashboard
+  if (!canUseStudio && window.location.hash.replace('#', '') === 'studio') {
+    switchTab('dashboard');
+    window.location.hash = 'dashboard';
+  }
+}
+
+function showApp(account) {
+  if (loginScreenEl) loginScreenEl.style.display = 'none';
+  if (appContainerEl) appContainerEl.style.display = '';
+  if (sidebarAccountLabel) sidebarAccountLabel.textContent = account.label || 'Tài khoản';
+  if (sidebarPlanLabel) sidebarPlanLabel.textContent = account.planLabel || '';
+  canUseStudio = !!account.canUseStudio;
+  applyStudioAccessUI();
+}
+
+async function checkAuthAndInit() {
+  try {
+    const res = await fetch(`${API_BASE}/api/me`);
+    if (!res.ok) {
+      showLoginScreen();
+      return;
+    }
+    const data = await res.json();
+    showApp(data);
+    startAppAfterLogin();
+  } catch (err) {
+    showLoginScreen();
+  }
+}
+
+if (loginForm) {
+  loginForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const licenseKey = (loginLicenseKeyInput.value || '').trim();
+    if (!licenseKey) return;
+
+    btnLoginSubmit.disabled = true;
+    btnLoginSubmit.textContent = 'Đang kiểm tra...';
+    if (loginErrorEl) loginErrorEl.style.display = 'none';
+
+    try {
+      const res = await fetch(`${API_BASE}/api/license/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ licenseKey })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'License key không hợp lệ.');
+      }
+      showApp(data.account);
+      startAppAfterLogin();
+    } catch (err) {
+      if (loginErrorEl) {
+        loginErrorEl.textContent = err.message;
+        loginErrorEl.style.display = 'block';
+      }
+    } finally {
+      btnLoginSubmit.disabled = false;
+      btnLoginSubmit.textContent = 'Đăng nhập';
+    }
+  });
+}
+
+if (btnLogout) {
+  btnLogout.addEventListener('click', async () => {
+    if (!confirm('Đăng xuất khỏi tài khoản hiện tại?')) return;
+    try {
+      await fetch(`${API_BASE}/api/license/logout`, { method: 'POST' });
+    } catch (err) {}
+    window.location.reload();
+  });
 }
