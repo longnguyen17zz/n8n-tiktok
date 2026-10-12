@@ -36,6 +36,10 @@ export const CONFIG = {
   TIKTOK_AUTO_PUBLISH: process.env.TIKTOK_AUTO_PUBLISH === 'true',
   // 'manual' (mặc định): gửi video + caption qua Telegram để tự đăng tay bằng app TikTok thật (tránh
   // bị giảm phát tán do đăng qua API ngầm từ IP datacenter). 'auto': đăng thẳng qua TikTok Engine như cũ.
-  TIKTOK_POST_MODE: process.env.TIKTOK_POST_MODE || 'manual'
+  TIKTOK_POST_MODE: process.env.TIKTOK_POST_MODE || 'manual',
+  // Mật khẩu trang quản trị license key (/admin.html). Đổi giá trị này trong .env khi public app.
+  ADMIN_SECRET: process.env.ADMIN_SECRET || 'change-me-admin-secret',
+  SESSION_COOKIE_NAME: 'sid',
+  NODE_ENV: process.env.NODE_ENV || 'development'
 };
 

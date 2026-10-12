@@ -12,14 +12,14 @@ import { mergeVideosWithFfmpeg } from './ffmpeg.js';
 import { createVideoInGoogleVids } from './vids.js';
 import { uploadVideoToTikTok, isTikTokConfigured } from './tiktok.js';
 
-export async function sendTelegram(msg) {
-  if (!CONFIG.TELEGRAM_BOT_TOKEN) {
+export async function sendTelegram(msg, cfg = CONFIG) {
+  if (!cfg.TELEGRAM_BOT_TOKEN) {
     console.log('ℹ️ Chưa cấu hình TELEGRAM_BOT_TOKEN, bỏ qua gửi Telegram.');
     return;
   }
   try {
-    await axios.post(`https://api.telegram.org/bot${CONFIG.TELEGRAM_BOT_TOKEN}/sendMessage`, {
-      chat_id: CONFIG.TELEGRAM_CHAT_ID,
+    await axios.post(`https://api.telegram.org/bot${cfg.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      chat_id: cfg.TELEGRAM_CHAT_ID,
       text: msg
     });
     console.log('📱 Đã gửi thông báo Telegram thành công.');
@@ -33,8 +33,8 @@ export async function sendTelegram(msg) {
  * API ngầm (dễ bị TikTok âm thầm giảm phát tán dẫn tới 0 view). Caption được gửi riêng trong khối
  * code (```...```) để bấm giữ/copy trên điện thoại là lấy trọn vẹn, dán thẳng vào ô caption TikTok.
  */
-export async function sendForManualTikTokPost({ videoPathOrUrl, caption, productId, productName, cartDetail, stt, logger = (l, m) => console.log(`[${l}] ${m}`) }) {
-  if (!CONFIG.TELEGRAM_BOT_TOKEN) {
+export async function sendForManualTikTokPost({ videoPathOrUrl, caption, productId, productName, cartDetail, stt, logger = (l, m) => console.log(`[${l}] ${m}`), cfg = CONFIG }) {
+  if (!cfg.TELEGRAM_BOT_TOKEN) {
     throw new Error('Chưa cấu hình TELEGRAM_BOT_TOKEN, không thể gửi video để đăng tay.');
   }
 
@@ -51,33 +51,33 @@ export async function sendForManualTikTokPost({ videoPathOrUrl, caption, product
     }
     logger('info', `📥 Đang tải video từ Google Drive (ID: ${driveId}) để gửi qua Telegram...`);
     localVideoPath = path.join(tempDir, `telegram_manual_${Date.now()}_${driveId}.mp4`);
-    const videoBuffer = await Google.downloadFileAsBase64(driveId);
+    const videoBuffer = await Google.downloadFileAsBase64(driveId, cfg);
     fs.writeFileSync(localVideoPath, videoBuffer);
     tempDownloaded = true;
   }
 
   try {
     const form = new FormData();
-    form.append('chat_id', CONFIG.TELEGRAM_CHAT_ID);
+    form.append('chat_id', cfg.TELEGRAM_CHAT_ID);
     form.append('caption', `🟡 Video sẵn sàng — bài ${stt} (${productName})\n👉 Giỏ hàng: ${cartDetail}\n\n⬇️ Caption để dán ở tin nhắn tiếp theo (bấm giữ để copy)`);
     form.append('video', fs.createReadStream(localVideoPath), { filename: path.basename(localVideoPath) });
 
-    await axios.post(`https://api.telegram.org/bot${CONFIG.TELEGRAM_BOT_TOKEN}/sendVideo`, form, {
+    await axios.post(`https://api.telegram.org/bot${cfg.TELEGRAM_BOT_TOKEN}/sendVideo`, form, {
       headers: form.getHeaders(),
       maxBodyLength: Infinity,
       maxContentLength: Infinity
     });
 
     if (productId) {
-      await axios.post(`https://api.telegram.org/bot${CONFIG.TELEGRAM_BOT_TOKEN}/sendMessage`, {
-        chat_id: CONFIG.TELEGRAM_CHAT_ID,
+      await axios.post(`https://api.telegram.org/bot${cfg.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+        chat_id: cfg.TELEGRAM_CHAT_ID,
         text: `🏷️ ID sản phẩm (bấm giữ để copy, dán vào ô tìm sản phẩm khi gắn giỏ hàng):\n` + '```\n' + productId + '\n```',
         parse_mode: 'Markdown'
       });
     }
 
-    await axios.post(`https://api.telegram.org/bot${CONFIG.TELEGRAM_BOT_TOKEN}/sendMessage`, {
-      chat_id: CONFIG.TELEGRAM_CHAT_ID,
+    await axios.post(`https://api.telegram.org/bot${cfg.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      chat_id: cfg.TELEGRAM_CHAT_ID,
       text: '```\n' + caption + '\n```',
       parse_mode: 'Markdown'
     });
@@ -97,7 +97,7 @@ export async function resizeImage1080x1920(buffer) {
     .toBuffer();
 }
 
-export async function resolveLogoPath(logoNameOrId, logger = console.log) {
+export async function resolveLogoPath(logoNameOrId, logger = console.log, cfg = CONFIG) {
   const logosDir = path.resolve('logos');
   fs.mkdirSync(logosDir, { recursive: true });
 
@@ -116,7 +116,7 @@ export async function resolveLogoPath(logoNameOrId, logger = console.log) {
     if (fs.existsSync(dest)) return dest;
     try {
       logger('info', `📥 Đang tải logo từ Google Drive (ID: ${driveId})...`);
-      const buf = await Google.downloadFileAsBase64(driveId);
+      const buf = await Google.downloadFileAsBase64(driveId, cfg);
       fs.writeFileSync(dest, buf);
       return dest;
     } catch (e) {
@@ -126,9 +126,9 @@ export async function resolveLogoPath(logoNameOrId, logger = console.log) {
 
   // 3. Nếu là tên file trên Google Drive (ví dụ: logotest.jpg, logo_thoitrang.jpg)
   try {
-    let drive = await Google.getAuthenticatedDriveClient();
-    if (!drive && CONFIG.GOOGLE_SERVICE_ACCOUNT_JSON) {
-      const auth = Google.getAuth();
+    let drive = await Google.getAuthenticatedDriveClient(cfg.accountId);
+    if (!drive && cfg.GOOGLE_SERVICE_ACCOUNT_JSON) {
+      const auth = Google.getAuth(cfg);
       drive = (await import('googleapis')).google.drive({ version: 'v3', auth });
     }
     if (drive) {
@@ -141,7 +141,7 @@ export async function resolveLogoPath(logoNameOrId, logger = console.log) {
       if (res.data.files && res.data.files.length > 0) {
         const fileId = res.data.files[0].id;
         logger('info', `📥 Đang tải logo "${raw}" từ Google Drive...`);
-        const buf = await Google.downloadFileAsBase64(fileId);
+        const buf = await Google.downloadFileAsBase64(fileId, cfg);
         fs.writeFileSync(localCandidate, buf);
         return localCandidate;
       }
@@ -155,7 +155,7 @@ export async function resolveLogoPath(logoNameOrId, logger = console.log) {
   return null;
 }
 
-export async function triggerTikTokUpload(row, logger = (level, msg) => console.log(`[${level}] ${msg}`)) {
+export async function triggerTikTokUpload(row, logger = (level, msg) => console.log(`[${level}] ${msg}`), cfg = CONFIG) {
   logger('info', `📱 Bắt đầu luồng đăng bài trực tiếp lên TikTok cho hàng #${row.rowNumber} ("${row['Tên Sản Phẩm']}")`);
 
   const videoUrl = row['Link Video'];
@@ -168,13 +168,13 @@ export async function triggerTikTokUpload(row, logger = (level, msg) => console.
   // Caption: lấy từ cột "Caption Sản Phẩm", fallback về AI tạo mới hoặc Content Video
   let caption = (row['Caption Sản Phẩm'] || '').trim();
   if (!caption) {
-    if (CONFIG.GEMINI_API_KEY) {
+    if (cfg.GEMINI_API_KEY) {
       logger('info', '📝 Hàng chưa có caption, đang tự động tạo caption TikTok với AI...');
       caption = await AI.generateCaption({
         productName: row['Tên Sản Phẩm'],
         contentVideo: row['Content Video'],
         productAnalysis: row['Phân Tích SP']
-      });
+      }, cfg.GEMINI_API_KEY);
     } else {
       caption = AI.createSmartFallbackCaption(row['Tên Sản Phẩm'], row['Content Video'], row['Phân Tích SP']);
     }
@@ -191,16 +191,16 @@ export async function triggerTikTokUpload(row, logger = (level, msg) => console.
   // CHẾ ĐỘ MẶC ĐỊNH (manual): gửi video + caption qua Telegram để tự đăng tay bằng app TikTok thật,
   // KHÔNG gọi API đăng ngầm (tránh bị TikTok giảm phát tán do IP datacenter lệch vùng). Xem
   // CONFIG.TIKTOK_POST_MODE trong config.js để bật lại chế độ 'auto' (đăng thẳng như cũ) nếu cần.
-  if (CONFIG.TIKTOK_POST_MODE !== 'auto') {
+  if (cfg.TIKTOK_POST_MODE !== 'auto') {
     try {
-      await sendForManualTikTokPost({ videoPathOrUrl: videoUrl, caption, productId, productName, cartDetail, stt, logger });
+      await sendForManualTikTokPost({ videoPathOrUrl: videoUrl, caption, productId, productName, cartDetail, stt, logger, cfg });
 
-      if (CONFIG.GOOGLE_SERVICE_ACCOUNT_JSON) {
+      if (cfg.GOOGLE_SERVICE_ACCOUNT_JSON) {
         try {
           await Google.updateRowStatus(row.rowNumber, 'Thành Công', {
             'Trạng Thái upload': 'Chờ Đăng Tay',
             'Note': new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour12: false })
-          });
+          }, cfg);
           logger('success', `📝 Đã cập nhật [Trạng Thái upload]: "Chờ Đăng Tay" trên Google Sheet cho hàng #${row.rowNumber}.`);
         } catch (sheetErr) {
           logger('warning', `Lỗi cập nhật Google Sheet: ${sheetErr.message}`);
@@ -211,12 +211,12 @@ export async function triggerTikTokUpload(row, logger = (level, msg) => console.
       return { success: true, manual: true };
     } catch (err) {
       logger('error', `❌ Gửi Telegram để đăng tay cho hàng #${row.rowNumber} thất bại: ${err.message}`);
-      if (CONFIG.GOOGLE_SERVICE_ACCOUNT_JSON) {
+      if (cfg.GOOGLE_SERVICE_ACCOUNT_JSON) {
         try {
           await Google.updateRowStatus(row.rowNumber, row['Trạng Thái'] || 'Thành Công', {
             'Trạng Thái upload': 'Chờ Đăng',
             'Note': `Lỗi gửi Telegram: ${err.message}`
-          });
+          }, cfg);
         } catch (e) {}
       }
       throw err;
@@ -224,11 +224,11 @@ export async function triggerTikTokUpload(row, logger = (level, msg) => console.
   }
 
   // Cập nhật Google Sheet sang "Đang Đăng"
-  if (CONFIG.GOOGLE_SERVICE_ACCOUNT_JSON) {
+  if (cfg.GOOGLE_SERVICE_ACCOUNT_JSON) {
     try {
       await Google.updateRowStatus(row.rowNumber, row['Trạng Thái'] || 'Thành Công', {
         'Trạng Thái upload': 'Đang Đăng'
-      });
+      }, cfg);
     } catch (e) {}
   }
 
@@ -239,19 +239,22 @@ export async function triggerTikTokUpload(row, logger = (level, msg) => console.
       caption,
       productId,
       productName,
-      logger
+      sessionJson: cfg.TIKTOK_SESSION_JSON,
+      proxyUrl: cfg.TIKTOK_PROXY_URL,
+      logger,
+      cfg
     });
 
     const nowStr = new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour12: false });
 
     // 2. Cập nhật Google Sheet sang "Đã Đăng" (đồng bộ cột với n8n)
-    if (CONFIG.GOOGLE_SERVICE_ACCOUNT_JSON) {
+    if (cfg.GOOGLE_SERVICE_ACCOUNT_JSON) {
       try {
         await Google.updateRowStatus(row.rowNumber, 'Thành Công', {
           'Trạng Thái upload': 'Đã Đăng',
           'Note': nowStr,
           'Phân Tích SP': row['Phân Tích SP'] || ''
-        });
+        }, cfg);
         logger('success', `📝 Đã cập nhật [Trạng Thái upload]: "Đã Đăng" trên Google Sheet cho hàng #${row.rowNumber}.`);
       } catch (sheetErr) {
         logger('warning', `Lỗi cập nhật Google Sheet: ${sheetErr.message}`);
@@ -268,7 +271,7 @@ export async function triggerTikTokUpload(row, logger = (level, msg) => console.
         cartDetail += ` (Tồn kho: ${result.showcaseStatus.stockNum || 'Còn'})`;
       }
     }
-    await sendTelegram(`🟢 TIKTOKsongkhoecungthaomoc: Đăng thành công bài ${stt} (${productName})\n👉 Giỏ hàng: ${cartDetail}\n\n📝 ${caption}`);
+    await sendTelegram(`🟢 TIKTOKsongkhoecungthaomoc: Đăng thành công bài ${stt} (${productName})\n👉 Giỏ hàng: ${cartDetail}\n\n📝 ${caption}`, cfg);
 
     logger('success', `✨ Hoàn tất 100% đăng TikTok cho hàng #${row.rowNumber}!`);
     return { success: true, result };
@@ -276,12 +279,12 @@ export async function triggerTikTokUpload(row, logger = (level, msg) => console.
   } catch (err) {
     logger('error', `❌ Đăng TikTok hàng #${row.rowNumber} thất bại: ${err.message}`);
 
-    if (CONFIG.GOOGLE_SERVICE_ACCOUNT_JSON) {
+    if (cfg.GOOGLE_SERVICE_ACCOUNT_JSON) {
       try {
         await Google.updateRowStatus(row.rowNumber, row['Trạng Thái'] || 'Thành Công', {
           'Trạng Thái upload': 'Chờ Đăng',
           'Note': `Lỗi TikTok: ${err.message}`
-        });
+        }, cfg);
       } catch (e) {}
     }
 
@@ -292,12 +295,12 @@ export async function triggerTikTokUpload(row, logger = (level, msg) => console.
 /**
  * Xử lý hoàn chỉnh 1 hàng sản phẩm từ Google Sheets
  */
-export async function processRow(row, logger = (level, msg) => console.log(`[${level}] ${msg}`)) {
+export async function processRow(row, logger = (level, msg) => console.log(`[${level}] ${msg}`), cfg = CONFIG) {
   logger('info', `📌 Bắt đầu xử lý hàng #${row.rowNumber}: "${row['Tên Sản Phẩm']}"`);
-  
-  if (CONFIG.GOOGLE_SERVICE_ACCOUNT_JSON) {
+
+  if (cfg.GOOGLE_SERVICE_ACCOUNT_JSON) {
     try {
-      await Google.updateRowStatus(row.rowNumber, 'Queue');
+      await Google.updateRowStatus(row.rowNumber, 'Queue', {}, cfg);
     } catch (e) {
       logger('warning', `Không cập nhật được trạng thái Sheet: ${e.message}`);
     }
@@ -317,27 +320,27 @@ export async function processRow(row, logger = (level, msg) => console.log(`[${l
       logger('info', '⬇️ Đang tải ảnh nguyên liệu đầu vào (Sản phẩm, Mẫu ảnh, Background)...');
       try {
         const [rawSP, rawMA, rawBG] = await Promise.all([
-          row['Link Sản Phẩm'] ? Google.downloadFileAsBase64(row['Link Sản Phẩm']).catch(() => null) : null,
-          row['Link Mẫu Ảnh'] ? Google.downloadFileAsBase64(row['Link Mẫu Ảnh']).catch(() => null) : null,
-          row['Link Background'] ? Google.downloadFileAsBase64(row['Link Background']).catch(() => null) : null
+          row['Link Sản Phẩm'] ? Google.downloadFileAsBase64(row['Link Sản Phẩm'], cfg).catch(() => null) : null,
+          row['Link Mẫu Ảnh'] ? Google.downloadFileAsBase64(row['Link Mẫu Ảnh'], cfg).catch(() => null) : null,
+          row['Link Background'] ? Google.downloadFileAsBase64(row['Link Background'], cfg).catch(() => null) : null
         ]);
 
         if (rawSP) imgSP = await resizeImage1080x1920(rawSP);
         if (rawMA) imgMA = await resizeImage1080x1920(rawMA);
         if (rawBG) imgBG = await resizeImage1080x1920(rawBG);
 
-        if (CONFIG.GEMINI_API_KEY) {
+        if (cfg.GEMINI_API_KEY) {
           if (imgMA) {
             logger('info', '🤖 Gemini Vision đang phân tích nhân vật Mẫu ảnh...');
-            maAnalysis = await AI.analyzeModel(imgMA).catch(() => '');
+            maAnalysis = await AI.analyzeModel(imgMA, cfg.GEMINI_API_KEY).catch(() => '');
           }
           if (imgBG) {
             logger('info', '🤖 Gemini Vision đang phân tích không gian Background...');
-            bgAnalysis = await AI.analyzeBackground(imgBG).catch(() => '');
+            bgAnalysis = await AI.analyzeBackground(imgBG, cfg.GEMINI_API_KEY).catch(() => '');
           }
           if (imgSP && (!row['Phân Tích SP'] || row['Phân Tích SP'].length < 20)) {
             logger('info', '🤖 Gemini Vision đang phân tích sản phẩm...');
-            pAnalysis = await AI.analyzeProduct(imgSP, row['Tên Sản Phẩm']).catch(() => pAnalysis);
+            pAnalysis = await AI.analyzeProduct(imgSP, row['Tên Sản Phẩm'], cfg.GEMINI_API_KEY).catch(() => pAnalysis);
           }
         }
       } catch (err) {
@@ -347,7 +350,7 @@ export async function processRow(row, logger = (level, msg) => console.log(`[${l
 
     let finalOutPath = path.join(workDir, 'final_video.mp4');
 
-    if (CONFIG.ENGINE === 'vids') {
+    if (cfg.ENGINE === 'vids') {
       logger('info', '🎬 Đang kết nối Google Vids (0 Credit, gói Ultra)...');
       // Mỗi cảnh Google Vids thực tế chỉ sinh ra ~5s (dù cài đặt độ dài hiển thị 10s), nên mặc định
       // 3 cảnh nối tiếp (~15s) để đạt độ dài video review tiêu chuẩn 12-20s thay vì 2 cảnh (~8-10s).
@@ -403,7 +406,7 @@ export async function processRow(row, logger = (level, msg) => console.log(`[${l
         logger: (level, msg) => logger(level, msg)
       });
 
-      const logoFile = await resolveLogoPath(row.Logo, logger);
+      const logoFile = await resolveLogoPath(row.Logo, logger, cfg);
       if (logoFile) {
         logger('info', `🏷️ Gắn logo thương hiệu kênh: ${path.basename(logoFile)} (góc dưới phải)...`);
       }
@@ -412,12 +415,12 @@ export async function processRow(row, logger = (level, msg) => console.log(`[${l
     } else {
       // Flow / Veo cũ
       logger('info', '🎬 Đang tạo video qua Veo Flow...');
-      const acc = await Google.getAccountCookie();
+      const acc = await Google.getAccountCookie(cfg);
       const accessToken = await NanoAI.getGoogleLabsSession(acc.cookie);
-      const projectId = acc.projectId || CONFIG.FLOW_PROJECT_ID;
+      const projectId = acc.projectId || cfg.FLOW_PROJECT_ID;
 
       const numVideos = parseInt(row['Số Video'] || '2', 10);
-      const videoPrompts = await AI.generateVideoPrompts(numVideos, row['Tên Sản Phẩm'], row['Content Video'], pAnalysis);
+      const videoPrompts = await AI.generateVideoPrompts(numVideos, row['Tên Sản Phẩm'], row['Content Video'], pAnalysis, cfg.GEMINI_API_KEY);
 
       const videoUrls = await NanoAI.generateVideosVeo(acc.nanoai, accessToken, projectId, videoPrompts, 'start_media');
       const clipPaths = [];
@@ -427,7 +430,7 @@ export async function processRow(row, logger = (level, msg) => console.log(`[${l
         fs.writeFileSync(cPath, Buffer.from(vRes.data));
         clipPaths.push(cPath);
       }
-      const logoFile = await resolveLogoPath(row.Logo, logger);
+      const logoFile = await resolveLogoPath(row.Logo, logger, cfg);
       await mergeVideosWithFfmpeg(clipPaths, logoFile, finalOutPath);
     }
 
@@ -440,7 +443,7 @@ export async function processRow(row, logger = (level, msg) => console.log(`[${l
     const driveFileName = `${Date.now()}_${cleanTitle}.mp4`;
 
     logger('info', `☁️ Tải video thành phẩm lên Google Drive: ${driveFileName}...`);
-    const driveFileId = await Google.uploadVideoToDrive(finalOutPath, driveFileName);
+    const driveFileId = await Google.uploadVideoToDrive(finalOutPath, driveFileName, cfg);
     const finalVideoUrl = `https://drive.google.com/file/d/${driveFileId}`;
     logger('success', `Đã lưu Drive: ${finalVideoUrl}`);
 
@@ -457,14 +460,14 @@ export async function processRow(row, logger = (level, msg) => console.log(`[${l
         productName: row['Tên Sản Phẩm'],
         contentVideo: row['Content Video'],
         productAnalysis: pAnalysis
-      });
+      }, cfg.GEMINI_API_KEY);
       logger('success', `✨ Caption TikTok mới: "${caption.slice(0, 80)}..."`);
     } else {
       logger('info', `📝 Giữ nguyên Caption có sẵn từ Google Sheet: "${caption.slice(0, 80)}..."`);
     }
 
     // Cập nhật Google Sheet
-    if (CONFIG.GOOGLE_SERVICE_ACCOUNT_JSON) {
+    if (cfg.GOOGLE_SERVICE_ACCOUNT_JSON) {
       try {
         logger('info', '📝 Cập nhật trạng thái "Thành Công" & "Chờ Đăng" lên Google Sheet...');
         await Google.updateRowStatus(row.rowNumber, 'Thành Công', {
@@ -473,14 +476,14 @@ export async function processRow(row, logger = (level, msg) => console.log(`[${l
           'Phân Tích SP': pAnalysis,
           'Caption Sản Phẩm': caption,
           'Trạng Thái upload': 'Chờ Đăng'
-        });
+        }, cfg);
       } catch (err) {
         logger('warning', `Cập nhật Sheet thất bại: ${err.message}`);
       }
     }
 
     // Tự động đăng TikTok nếu bật chế độ tự động và đã cấu hình Session
-    if (CONFIG.TIKTOK_AUTO_PUBLISH && isTikTokConfigured()) {
+    if (cfg.TIKTOK_AUTO_PUBLISH && isTikTokConfigured(cfg.TIKTOK_SESSION_JSON)) {
       try {
         logger('info', '📱 Tự động đăng video vừa tạo lên TikTok qua TikTok Engine...');
         const updatedRow = {
@@ -489,22 +492,22 @@ export async function processRow(row, logger = (level, msg) => console.log(`[${l
           'Caption Sản Phẩm': caption,
           'Phân Tích SP': pAnalysis
         };
-        await triggerTikTokUpload(updatedRow, logger);
+        await triggerTikTokUpload(updatedRow, logger, cfg);
       } catch (autoErr) {
         logger('warning', `⚠️ Tự động đăng TikTok gặp lỗi: ${autoErr.message}. Hàng giữ trạng thái "Chờ Đăng".`);
       }
     }
 
     // Gửi thông báo Telegram
-    await sendTelegram(`🟢 Review Sản Phẩm: Tạo Thành Công Video hàng ${row.rowNumber} (${row['Tên Sản Phẩm']})\n👉 Link: ${finalVideoUrl}\n\n📝 Caption: ${caption}`);
+    await sendTelegram(`🟢 Review Sản Phẩm: Tạo Thành Công Video hàng ${row.rowNumber} (${row['Tên Sản Phẩm']})\n👉 Link: ${finalVideoUrl}\n\n📝 Caption: ${caption}`, cfg);
 
     logger('success', `✅ Hoàn thành 100% video hàng #${row.rowNumber}!`);
     return { success: true, videoUrl: finalVideoUrl, caption };
 
   } catch (err) {
     logger('error', `❌ Lỗi xử lý hàng #${row.rowNumber}: ${err.message}`);
-    if (CONFIG.GOOGLE_SERVICE_ACCOUNT_JSON) {
-      await Google.updateRowStatus(row.rowNumber, 'Lỗi', { Note: err.message }).catch(() => {});
+    if (cfg.GOOGLE_SERVICE_ACCOUNT_JSON) {
+      await Google.updateRowStatus(row.rowNumber, 'Lỗi', { Note: err.message }, cfg).catch(() => {});
     }
     throw err;
   } finally {
@@ -515,22 +518,22 @@ export async function processRow(row, logger = (level, msg) => console.log(`[${l
 /**
  * CHẾ ĐỘ 1: Chỉ chạy đăng TikTok cho các video đã sẵn sàng ("Chờ Đăng")
  */
-export async function runTikTokWorker(logger = (level, msg) => console.log(`[${level}] ${msg}`)) {
+export async function runTikTokWorker(logger = (level, msg) => console.log(`[${level}] ${msg}`), cfg = CONFIG) {
   logger('info', '📱 [TikTok Worker] Bắt đầu quét các video "Chờ Đăng" trên Google Sheet...');
 
-  if (!CONFIG.GOOGLE_SERVICE_ACCOUNT_JSON) {
+  if (!cfg.GOOGLE_SERVICE_ACCOUNT_JSON) {
     logger('warning', 'Chưa có cấu hình Google Service Account, không thể quét Sheet.');
     return null;
   }
 
-  if (CONFIG.TIKTOK_POST_MODE === 'auto' && !isTikTokConfigured()) {
+  if (cfg.TIKTOK_POST_MODE === 'auto' && !isTikTokConfigured(cfg.TIKTOK_SESSION_JSON)) {
     logger('error', '❌ Chưa cấu hình TIKTOK_SESSION_JSON hợp lệ.');
     return null;
   }
 
   // Không truyền limit — quét toàn bộ sheet (1 lần gọi API duy nhất, không tốn thêm chi phí) để
   // không bao giờ bỏ sót video "Chờ Đăng" cũ hơn N hàng gần nhất.
-  const tiktokQueue = await Google.fetchTikTokQueueRows();
+  const tiktokQueue = await Google.fetchTikTokQueueRows(Infinity, cfg);
   const pendingList = tiktokQueue
     .filter(r => (r['Trạng Thái upload'] || '').trim() === 'Chờ Đăng' && (r['Link Video'] || '').trim())
     .sort((a, b) => (a.rowNumber || 0) - (b.rowNumber || 0)); // Đăng theo thứ tự từ trên xuống dưới
@@ -542,61 +545,58 @@ export async function runTikTokWorker(logger = (level, msg) => console.log(`[${l
 
   const targetRow = pendingList[0];
   logger('info', `🎯 Tìm thấy ${pendingList.length} video chờ đăng. Tiến hành đăng hàng #${targetRow.rowNumber} ("${targetRow['Tên Sản Phẩm']}")`);
-  return await triggerTikTokUpload(targetRow, logger);
+  return await triggerTikTokUpload(targetRow, logger, cfg);
 }
 
 /**
  * CHẾ ĐỘ 2: Chỉ chạy tạo video (Lưu vào Google Drive, gán trạng thái "Chờ Đăng", KHÔNG đăng TikTok)
  */
-export async function runGenerateWorker(logger = (level, msg) => console.log(`[${level}] ${msg}`)) {
+export async function runGenerateWorker(logger = (level, msg) => console.log(`[${level}] ${msg}`), cfg = CONFIG) {
   logger('info', '🎬 [Video Generator] Bắt đầu quét hàng đợi "Chờ Tạo" từ Google Sheets...');
 
-  if (!CONFIG.GOOGLE_SERVICE_ACCOUNT_JSON) {
+  if (!cfg.GOOGLE_SERVICE_ACCOUNT_JSON) {
     logger('warning', 'Chưa có cấu hình Google Service Account, không thể quét Sheet.');
     return null;
   }
 
-  const row = await Google.fetchQueueRow();
+  const row = await Google.fetchQueueRow(cfg);
   if (!row) {
     logger('info', 'ℹ️ Không có hàng nào ở trạng thái "Chờ Tạo".');
     return null;
   }
 
-  // Tạm tắt auto publish TikTok trong quá trình tạo video để đảm bảo chỉ tạo và lưu Drive
-  const origAutoPublish = CONFIG.TIKTOK_AUTO_PUBLISH;
-  CONFIG.TIKTOK_AUTO_PUBLISH = false;
-  try {
-    return await processRow(row, logger);
-  } finally {
-    CONFIG.TIKTOK_AUTO_PUBLISH = origAutoPublish;
-  }
+  // Tạm tắt auto publish TikTok trong quá trình tạo video để đảm bảo chỉ tạo và lưu Drive — an toàn
+  // vì cfg là bản sao riêng của request/account này (getAccountConfig tạo object mới mỗi lần gọi),
+  // không phải CONFIG singleton dùng chung nên không ảnh hưởng account khác đang chạy song song.
+  const scopedCfg = { ...cfg, TIKTOK_AUTO_PUBLISH: false };
+  return await processRow(row, logger, scopedCfg);
 }
 
 /**
  * Quét và chạy hàng đợi tổng hợp
  */
-export async function runWorker(logger = (level, msg) => console.log(`[${level}] ${msg}`)) {
+export async function runWorker(logger = (level, msg) => console.log(`[${level}] ${msg}`), cfg = CONFIG) {
   logger('info', '🚀 Bắt đầu quét hàng đợi từ Google Sheets...');
-  
-  if (!CONFIG.GOOGLE_SERVICE_ACCOUNT_JSON) {
+
+  if (!cfg.GOOGLE_SERVICE_ACCOUNT_JSON) {
     logger('warning', 'Chưa có cấu hình Google Service Account, không thể quét Sheet.');
     return null;
   }
 
   // 1. Quét xem có video nào đang ở trạng thái "Chờ Đăng" TikTok không
-  if (CONFIG.TIKTOK_AUTO_PUBLISH && isTikTokConfigured()) {
-    const posted = await runTikTokWorker(logger);
+  if (cfg.TIKTOK_AUTO_PUBLISH && isTikTokConfigured(cfg.TIKTOK_SESSION_JSON)) {
+    const posted = await runTikTokWorker(logger, cfg);
     if (posted) return posted;
   }
 
   // 2. Quét hàng đợi tạo video mới
-  const row = await Google.fetchQueueRow();
+  const row = await Google.fetchQueueRow(cfg);
   if (!row) {
     logger('info', 'ℹ️ Không có hàng nào ở trạng thái "Chờ Đăng" hoặc "Chờ Tạo".');
     return null;
   }
 
-  return await processRow(row, logger);
+  return await processRow(row, logger, cfg);
 }
 
 // Nếu chạy trực tiếp từ CLI

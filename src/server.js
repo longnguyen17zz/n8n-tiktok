@@ -9,131 +9,254 @@ import * as Google from './google.js';
 import * as AI from './ai.js';
 import { createVideoInGoogleVids } from './vids.js';
 import { mergeVideosWithFfmpeg } from './ffmpeg.js';
-import { runWorker, processRow, sendTelegram, resolveLogoPath, triggerTikTokUpload, runTikTokWorker } from './index.js';
+import { processRow, sendTelegram, resolveLogoPath, triggerTikTokUpload, runTikTokWorker } from './index.js';
 import { exec } from 'child_process';
 import { getAuthUrl, handleCallback, getOAuthStatus, disconnectOAuth, getAuthenticatedDriveClient } from './oauth.js';
 import { isTikTokConfigured, normalizeTikTokSession } from './tiktok.js';
 import { ensureProductInShowcase, addProductToShowcase, getShowcaseProducts } from './showcase.js';
+import { initDb } from './db.js';
+import {
+  ensureBootstrapAccount,
+  verifyLicenseAndLogin,
+  destroySession,
+  resolveSession,
+  getAccountById,
+  getAccountConfig,
+  updateAccountSettings,
+  isAccountLicenseActive,
+  listLicenseKeys,
+  createLicenseKey,
+  revokeLicenseKey,
+  reactivateLicenseKey,
+  setAccountStudioAccess
+} from './accounts.js';
+import { requireAuth, requireAdmin, requireStudioAccess, setSessionCookie, clearSessionCookie, getSessionToken, licenseVerifyRateLimit } from './authMiddleware.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Giữ quyền truy cập cho chủ app sau khi nâng cấp lên multi-tenant: nếu chưa có license key nào,
+// tạo 1 key bootstrap seed từ .env hiện tại và in rõ ra log để đăng nhập lần đầu.
+await initDb();
+const bootstrapLicense = await ensureBootstrapAccount();
+if (bootstrapLicense) {
+  console.log(`\n======================================================`);
+  console.log(`🔑 LICENSE KEY BOOTSTRAP (đăng nhập lần đầu): ${bootstrapLicense.keyCode}`);
+  console.log(`======================================================\n`);
+}
+
 const app = express();
 const PORT = CONFIG.PORT || process.env.PORT || 3005;
 
+app.set('trust proxy', true);
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '../public')));
 app.use('/temp', express.static(path.join(__dirname, '../temp')));
 
-// In-memory logger & worker state
-const logs = [];
-function addLog(level, message) {
+// ================= TRẠNG THÁI RUNTIME THEO TỪNG ACCOUNT =================
+// Mỗi account (license key) có log, lịch tạo video & lịch đăng TikTok ĐỘC LẬP hoàn toàn — không
+// còn 1 biến global duy nhất dùng chung như bản single-tenant trước đây.
+function createDefaultRuntime() {
+  return {
+    logs: [],
+    currentProcessingItem: null,
+    scheduleConfig: {
+      enabled: false,
+      intervalSeconds: 60,
+      continuous: true,
+      timeRangeEnabled: false,
+      startHour: 8,
+      endHour: 22,
+      maxPerBatch: 10
+    },
+    scheduleState: {
+      isProcessing: false,
+      lastRunTime: null,
+      nextRunTime: null,
+      totalProcessedSession: 0,
+      currentStatus: 'Đã tạm dừng',
+      currentProcessingRow: null
+    },
+    scheduleTimer: null,
+    tiktokScheduleConfig: {
+      enabled: false,
+      postHours: [7, 11, 17, 23]
+    },
+    tiktokScheduleState: {
+      isProcessing: false,
+      lastRunTime: null,
+      lastPostedKey: null,
+      totalPostedSession: 0,
+      currentStatus: 'Đã tạm dừng'
+    },
+    tiktokScheduleCheckInterval: null
+  };
+}
+
+const runtimeByAccount = new Map();
+function getRuntime(accountId) {
+  if (!runtimeByAccount.has(accountId)) {
+    runtimeByAccount.set(accountId, createDefaultRuntime());
+  }
+  return runtimeByAccount.get(accountId);
+}
+
+function addLog(accountId, level, message) {
+  const rt = getRuntime(accountId);
   const entry = {
     id: Date.now() + Math.random(),
     time: new Date().toLocaleTimeString('vi-VN'),
     level, // 'info', 'success', 'warning', 'error'
     message
   };
-  logs.unshift(entry);
-  if (logs.length > 200) logs.pop();
-  console.log(`[${entry.time}] [${level.toUpperCase()}] ${message}`);
+  rt.logs.unshift(entry);
+  if (rt.logs.length > 200) rt.logs.pop();
+  console.log(`[acc${accountId}][${entry.time}] [${level.toUpperCase()}] ${message}`);
 }
 
-// ================= CẤU HÌNH & TRẠNG THÁI LÊN LỊCH (SCHEDULE) =================
-const scheduleConfig = {
-  enabled: false,
-  intervalSeconds: 60, // Mặc định 60 giây (1 phút)
-  continuous: true,    // Tự động làm tiếp các hàng tiếp theo khi còn hàng "Chờ Tạo"
-  timeRangeEnabled: false,
-  startHour: 8,
-  endHour: 22,
-  maxPerBatch: 10
-};
+// Luôn đọc lại cấu hình mới nhất từ DB cho vòng lặp lịch chạy nền (setTimeout/setInterval) — tránh
+// dùng "cfg" cũ đã đóng băng từ lúc bật lịch nếu account đổi cấu hình giữa chừng.
+async function loadFreshCfg(accountId) {
+  const account = await getAccountById(accountId);
+  if (!account) return null;
+  return getAccountConfig(account);
+}
 
-let scheduleState = {
-  isProcessing: false,
-  lastRunTime: null,
-  nextRunTime: null,
-  totalProcessedSession: 0,
-  currentStatus: 'Đã tạm dừng',
-  currentProcessingRow: null
-};
+// ================= HÀNG ĐỢI RENDER DÙNG CHUNG (GIỚI HẠN BỞI 1 CHROME PROFILE/CỔNG CDP) =================
+// Engine Google Vids (Puppeteer) hiện vẫn dùng chung 1 Chrome profile + 1 cổng CDP cho MỌI account
+// (xem kế hoạch Giai đoạn 2 để tách riêng theo từng account) — nên mọi lệnh render video thật sự
+// phải đi qua hàng đợi tuần tự này, dù bao nhiêu account cùng bật lịch cùng lúc.
+let renderQueueTail = Promise.resolve();
+function withRenderLock(fn) {
+  const run = renderQueueTail.then(fn, fn);
+  renderQueueTail = run.then(() => {}, () => {});
+  return run;
+}
 
-let scheduleTimer = null;
-let currentProcessingItem = null;
+// ================= AUTH: CHẶN TOÀN BỘ /api/* NGOẠI TRỪ MỘT SỐ ROUTE CÔNG KHAI =================
+const PUBLIC_API_PATHS = new Set(['/api/license/verify', '/api/license/logout', '/api/me']);
+app.use(async (req, res, next) => {
+  if (!req.path.startsWith('/api/')) return next();
+  if (PUBLIC_API_PATHS.has(req.path)) return next();
+  if (req.path.startsWith('/api/admin/')) return next(); // tự bảo vệ riêng bằng requireAdmin
+  await requireAuth(req, res, next);
+});
 
-// ================= CẤU HÌNH & TRẠNG THÁI ĐĂNG TIKTOK TỰ ĐỘNG (TÁCH RIÊNG HOÀN TOÀN) =================
-// Lịch này CHỈ đăng video (hàng "Chờ Đăng") lên TikTok, không bao giờ tự tạo video — hoàn toàn
-// độc lập với scheduleConfig ở trên (vốn chỉ tạo video, không bao giờ tự đăng TikTok).
-// Đăng theo ĐÚNG KHUNG GIỜ CỐ ĐỊNH trong ngày (giờ địa phương máy chạy server), không phải chu kỳ
-// lặp — ví dụ [7, 11, 17, 23] nghĩa là đăng 1 video lúc 7h, 11h, 17h và 23h mỗi ngày.
-const tiktokScheduleConfig = {
-  enabled: false,
-  postHours: [7, 11, 17, 23]
-};
+// ================= LICENSE: ĐĂNG NHẬP / ĐĂNG XUẤT / THÔNG TIN TÀI KHOẢN =================
+app.post('/api/license/verify', licenseVerifyRateLimit, async (req, res) => {
+  const { licenseKey } = req.body || {};
+  const result = await verifyLicenseAndLogin(licenseKey);
+  if (!result.ok) {
+    return res.status(401).json({ success: false, error: result.reason });
+  }
+  setSessionCookie(res, result.token);
+  res.json({
+    success: true,
+    account: { label: result.license.label, planLabel: result.license.planLabel, canUseStudio: result.account.canUseStudio }
+  });
+});
 
-let tiktokScheduleState = {
-  isProcessing: false,
-  lastRunTime: null,
-  lastPostedKey: null, // "YYYY-MM-DD-HH" của khung giờ vừa đăng, để không đăng trùng trong cùng 1 giờ
-  totalPostedSession: 0,
-  currentStatus: 'Đã tạm dừng'
-};
+app.post('/api/license/logout', async (req, res) => {
+  await destroySession(getSessionToken(req));
+  clearSessionCookie(res);
+  res.json({ success: true });
+});
 
-let tiktokScheduleCheckInterval = null;
+app.get('/api/me', async (req, res) => {
+  const session = await resolveSession(getSessionToken(req));
+  if (!session) return res.status(401).json({ error: 'Chưa đăng nhập' });
+  res.json({
+    success: true,
+    accountId: session.account.id,
+    label: session.license.label,
+    planLabel: session.license.planLabel,
+    canUseStudio: session.account.canUseStudio
+  });
+});
 
-// ================= API ENDPOINTS =================
+// ================= ADMIN: QUẢN LÝ LICENSE KEY =================
+app.get('/api/admin/license-keys', requireAdmin, async (req, res) => {
+  res.json({ success: true, items: await listLicenseKeys() });
+});
+
+app.post('/api/admin/license-keys', requireAdmin, async (req, res) => {
+  const { label, planLabel, expiresAt } = req.body || {};
+  const license = await createLicenseKey({ label, planLabel, expiresAt });
+  res.json({ success: true, license });
+});
+
+app.post('/api/admin/license-keys/:id/revoke', requireAdmin, async (req, res) => {
+  const license = await revokeLicenseKey(Number(req.params.id));
+  res.json({ success: true, license });
+});
+
+app.post('/api/admin/license-keys/:id/reactivate', requireAdmin, async (req, res) => {
+  const license = await reactivateLicenseKey(Number(req.params.id));
+  res.json({ success: true, license });
+});
+
+// Cấp/thu quyền dùng engine Google Vids (tab Studio + lịch tự động tạo video) cho 1 account cụ thể
+// — mặc định mọi account khách đều KHÔNG có quyền này, chỉ admin mới bật được cho ai đó nếu muốn.
+app.post('/api/admin/accounts/:id/studio-access', requireAdmin, async (req, res) => {
+  const account = await setAccountStudioAccess(Number(req.params.id), !!req.body?.enabled);
+  res.json({ success: true, account });
+});
+
+// ================= API ENDPOINTS (yêu cầu đăng nhập — req.account / req.cfg từ requireAuth) =================
 
 // 1. Trạng thái hệ thống & Thống kê
 app.get('/api/status', async (req, res) => {
+  const { cfg, account, license } = req;
+  const rt = getRuntime(account.id);
   const chromeProfileExists = fs.existsSync(path.resolve('chrome_profile'));
   res.json({
     status: 'online',
-    workerRunning: scheduleConfig.enabled,
-    currentProcessing: currentProcessingItem,
+    workerRunning: rt.scheduleConfig.enabled,
+    currentProcessing: rt.currentProcessingItem,
     schedule: {
-      config: scheduleConfig,
+      config: rt.scheduleConfig,
       state: {
-        ...scheduleState,
-        secondsUntilNextRun: (scheduleState.nextRunTime && scheduleConfig.enabled && !scheduleState.isProcessing)
-          ? Math.max(0, Math.round((scheduleState.nextRunTime - Date.now()) / 1000))
+        ...rt.scheduleState,
+        secondsUntilNextRun: (rt.scheduleState.nextRunTime && rt.scheduleConfig.enabled && !rt.scheduleState.isProcessing)
+          ? Math.max(0, Math.round((rt.scheduleState.nextRunTime - Date.now()) / 1000))
           : null
       }
     },
     tiktokSchedule: {
-      config: tiktokScheduleConfig,
+      config: rt.tiktokScheduleConfig,
       state: {
-        ...tiktokScheduleState,
-        secondsUntilNextRun: tiktokScheduleConfig.enabled ? secondsUntilNextTikTokSlot() : null
+        ...rt.tiktokScheduleState,
+        secondsUntilNextRun: rt.tiktokScheduleConfig.enabled ? secondsUntilNextTikTokSlot(rt) : null
       }
     },
-    engine: CONFIG.ENGINE || 'vids',
-    plan: 'Ultra 20x',
-    monthlyQuota: 1000,
+    engine: cfg.ENGINE || 'vids',
+    plan: license.planLabel || 'Chưa gán gói',
+    accountLabel: license.label || '',
     chromeConnected: chromeProfileExists,
-    telegramConfigured: !!CONFIG.TELEGRAM_BOT_TOKEN,
-    geminiConfigured: !!CONFIG.GEMINI_API_KEY,
-    sheetConnected: !!CONFIG.GOOGLE_SERVICE_ACCOUNT_JSON,
-    googleSheetId: CONFIG.SHEET_DOCUMENT_ID,
-    googleOAuth: getOAuthStatus(),
-    n8nWebhookConfigured: !!CONFIG.N8N_TIKTOK_WEBHOOK_URL,
-    n8nWebhookUrl: CONFIG.N8N_TIKTOK_WEBHOOK_URL,
-    tiktokConfigured: isTikTokConfigured(),
-    tiktokAutoPublish: CONFIG.TIKTOK_AUTO_PUBLISH
+    telegramConfigured: !!cfg.TELEGRAM_BOT_TOKEN,
+    geminiConfigured: !!cfg.GEMINI_API_KEY,
+    sheetConnected: !!cfg.GOOGLE_SERVICE_ACCOUNT_JSON,
+    googleSheetId: cfg.SHEET_DOCUMENT_ID,
+    googleOAuth: await getOAuthStatus(account.id),
+    n8nWebhookConfigured: !!cfg.N8N_TIKTOK_WEBHOOK_URL,
+    n8nWebhookUrl: cfg.N8N_TIKTOK_WEBHOOK_URL,
+    tiktokConfigured: isTikTokConfigured(cfg.TIKTOK_SESSION_JSON),
+    tiktokAutoPublish: cfg.TIKTOK_AUTO_PUBLISH
   });
 });
 
-// 2. Lấy logs thời gian thực
+// 2. Lấy logs thời gian thực (chỉ của account đang đăng nhập)
 app.get('/api/logs', (req, res) => {
-  res.json(logs);
+  res.json(getRuntime(req.account.id).logs);
 });
 
 // 3. Lấy hàng đợi từ Google Sheets
 app.get('/api/queue', async (req, res) => {
-  if (CONFIG.GOOGLE_SERVICE_ACCOUNT_JSON) {
+  const { cfg, account } = req;
+  if (cfg.GOOGLE_SERVICE_ACCOUNT_JSON) {
     try {
-      const items = await Google.fetchQueueRows(30);
+      const items = await Google.fetchQueueRows(30, cfg);
       return res.json({
         success: true,
         source: 'google_sheets',
@@ -141,15 +264,15 @@ app.get('/api/queue', async (req, res) => {
         items: items
       });
     } catch (err) {
-      addLog('warning', `Lỗi kết nối Google Sheet: ${err.message}.`);
+      addLog(account.id, 'warning', `Lỗi kết nối Google Sheet: ${err.message}.`);
     }
   }
 
-  // Dữ liệu mẫu minh họa nếu chưa nhập Google Service Account
+  // Dữ liệu mẫu minh họa nếu chưa cấu hình Google Service Account cho account này
   res.json({
     success: true,
     source: 'local',
-    notice: 'Chưa cấu hình GOOGLE_SERVICE_ACCOUNT_JSON trong file .env để đồng bộ trực tiếp với Google Sheet.',
+    notice: 'Chưa cấu hình Google Service Account trong Cấu hình & Tích hợp để đồng bộ trực tiếp với Google Sheet.',
     items: [
       {
         rowNumber: 2,
@@ -167,20 +290,22 @@ app.get('/api/queue', async (req, res) => {
 
 // 3b. Lấy danh sách hàng đã có video (trang riêng "Đăng TikTok")
 app.get('/api/tiktok/queue', async (req, res) => {
-  if (!CONFIG.GOOGLE_SERVICE_ACCOUNT_JSON) {
-    return res.json({ success: true, items: [], notice: 'Chưa cấu hình GOOGLE_SERVICE_ACCOUNT_JSON trong file .env.' });
+  const { cfg, account } = req;
+  if (!cfg.GOOGLE_SERVICE_ACCOUNT_JSON) {
+    return res.json({ success: true, items: [], notice: 'Chưa cấu hình Google Service Account.' });
   }
   try {
-    const items = await Google.fetchTikTokQueueRows(300);
+    const items = await Google.fetchTikTokQueueRows(300, cfg);
     res.json({ success: true, items });
   } catch (err) {
-    addLog('warning', `Lỗi tải danh sách video chờ đăng TikTok: ${err.message}`);
+    addLog(account.id, 'warning', `Lỗi tải danh sách video chờ đăng TikTok: ${err.message}`);
     res.status(500).json({ success: false, error: err.message, items: [] });
   }
 });
 
 // Proxy hiển thị ảnh từ Google Drive trực tiếp lên giao diện
 app.get('/api/drive/image', async (req, res) => {
+  const { cfg, account } = req;
   const { url, id } = req.query;
   const fileId = id || Google.extractDriveFileId(url);
   if (!fileId) {
@@ -188,9 +313,9 @@ app.get('/api/drive/image', async (req, res) => {
   }
 
   try {
-    let drive = await getAuthenticatedDriveClient();
-    if (!drive && CONFIG.GOOGLE_SERVICE_ACCOUNT_JSON) {
-      const auth = Google.getAuth();
+    let drive = await getAuthenticatedDriveClient(account.id);
+    if (!drive && cfg.GOOGLE_SERVICE_ACCOUNT_JSON) {
+      const auth = Google.getAuth(cfg);
       drive = google.drive({ version: 'v3', auth });
     }
 
@@ -213,13 +338,14 @@ app.get('/api/drive/image', async (req, res) => {
 
 // Proxy phát stream video từ Google Drive trực tiếp lên giao diện (hỗ trợ HTTP Range 206 để tua/phát mượt mà)
 app.get('/api/drive/video', async (req, res) => {
+  const { cfg, account } = req;
   const { id } = req.query;
   if (!id) return res.status(400).send('Thiếu fileId');
 
   try {
-    let drive = await getAuthenticatedDriveClient();
-    if (!drive && CONFIG.GOOGLE_SERVICE_ACCOUNT_JSON) {
-      const auth = Google.getAuth();
+    let drive = await getAuthenticatedDriveClient(account.id);
+    if (!drive && cfg.GOOGLE_SERVICE_ACCOUNT_JSON) {
+      const auth = Google.getAuth(cfg);
       drive = google.drive({ version: 'v3', auth });
     }
 
@@ -289,311 +415,321 @@ app.get('/api/drive/video', async (req, res) => {
 
 // 4. Lên lịch tự động (Schedule API)
 app.get('/api/schedule', (req, res) => {
+  const rt = getRuntime(req.account.id);
   res.json({
     success: true,
-    config: scheduleConfig,
+    config: rt.scheduleConfig,
     state: {
-      ...scheduleState,
-      secondsUntilNextRun: (scheduleState.nextRunTime && scheduleConfig.enabled && !scheduleState.isProcessing)
-        ? Math.max(0, Math.round((scheduleState.nextRunTime - Date.now()) / 1000))
+      ...rt.scheduleState,
+      secondsUntilNextRun: (rt.scheduleState.nextRunTime && rt.scheduleConfig.enabled && !rt.scheduleState.isProcessing)
+        ? Math.max(0, Math.round((rt.scheduleState.nextRunTime - Date.now()) / 1000))
         : null
     }
   });
 });
 
-app.post('/api/schedule/toggle', (req, res) => {
-  scheduleConfig.enabled = !scheduleConfig.enabled;
-  if (scheduleConfig.enabled) {
-    addLog('info', `🟢 Đã BẬT lịch chạy tự động (Chu kỳ quét: ${scheduleConfig.intervalSeconds}s, Chế độ liên tiếp: ${scheduleConfig.continuous ? 'BẬT' : 'TẮT'}).`);
-    executeScheduledRun();
+app.post('/api/schedule/toggle', requireStudioAccess, (req, res) => {
+  const { account } = req;
+  const rt = getRuntime(account.id);
+  rt.scheduleConfig.enabled = !rt.scheduleConfig.enabled;
+  if (rt.scheduleConfig.enabled) {
+    addLog(account.id, 'info', `🟢 Đã BẬT lịch chạy tự động (Chu kỳ quét: ${rt.scheduleConfig.intervalSeconds}s, Chế độ liên tiếp: ${rt.scheduleConfig.continuous ? 'BẬT' : 'TẮT'}).`);
+    executeScheduledRun(account.id);
   } else {
-    addLog('warning', '🔴 Đã TẮT lịch chạy tự động.');
-    if (scheduleTimer) clearTimeout(scheduleTimer);
-    scheduleState.nextRunTime = null;
-    scheduleState.currentStatus = 'Đã tạm dừng';
+    addLog(account.id, 'warning', '🔴 Đã TẮT lịch chạy tự động.');
+    if (rt.scheduleTimer) clearTimeout(rt.scheduleTimer);
+    rt.scheduleState.nextRunTime = null;
+    rt.scheduleState.currentStatus = 'Đã tạm dừng';
   }
 
   res.json({
     success: true,
-    enabled: scheduleConfig.enabled,
-    config: scheduleConfig,
-    state: scheduleState
+    enabled: rt.scheduleConfig.enabled,
+    config: rt.scheduleConfig,
+    state: rt.scheduleState
   });
 });
 
-app.post('/api/schedule/config', (req, res) => {
+app.post('/api/schedule/config', requireStudioAccess, (req, res) => {
+  const { account } = req;
+  const rt = getRuntime(account.id);
   const { intervalSeconds, continuous, timeRangeEnabled, startHour, endHour, maxPerBatch } = req.body;
 
   if (intervalSeconds !== undefined) {
-    scheduleConfig.intervalSeconds = Math.max(10, parseInt(intervalSeconds, 10));
+    rt.scheduleConfig.intervalSeconds = Math.max(10, parseInt(intervalSeconds, 10));
   }
   if (continuous !== undefined) {
-    scheduleConfig.continuous = !!continuous;
+    rt.scheduleConfig.continuous = !!continuous;
   }
   if (timeRangeEnabled !== undefined) {
-    scheduleConfig.timeRangeEnabled = !!timeRangeEnabled;
+    rt.scheduleConfig.timeRangeEnabled = !!timeRangeEnabled;
   }
   if (startHour !== undefined) {
-    scheduleConfig.startHour = parseInt(startHour, 10);
+    rt.scheduleConfig.startHour = parseInt(startHour, 10);
   }
   if (endHour !== undefined) {
-    scheduleConfig.endHour = parseInt(endHour, 10);
+    rt.scheduleConfig.endHour = parseInt(endHour, 10);
   }
   if (maxPerBatch !== undefined) {
-    scheduleConfig.maxPerBatch = Math.max(1, parseInt(maxPerBatch, 10));
+    rt.scheduleConfig.maxPerBatch = Math.max(1, parseInt(maxPerBatch, 10));
   }
 
-  addLog('info', `⚙️ Đã cập nhật cấu hình Schedule: Chu kỳ ${scheduleConfig.intervalSeconds}s, Làm liên tiếp: ${scheduleConfig.continuous ? 'Có' : 'Không'}.`);
+  addLog(account.id, 'info', `⚙️ Đã cập nhật cấu hình Schedule: Chu kỳ ${rt.scheduleConfig.intervalSeconds}s, Làm liên tiếp: ${rt.scheduleConfig.continuous ? 'Có' : 'Không'}.`);
 
-  // Nếu đang bật và không đang xử lý hàng, lập lịch lại theo chu kỳ mới
-  if (scheduleConfig.enabled && !scheduleState.isProcessing) {
-    scheduleNextRun();
+  if (rt.scheduleConfig.enabled && !rt.scheduleState.isProcessing) {
+    scheduleNextRun(account.id);
   }
 
   res.json({
     success: true,
-    config: scheduleConfig,
-    state: scheduleState
+    config: rt.scheduleConfig,
+    state: rt.scheduleState
   });
 });
 
-app.post('/api/schedule/run-now', async (req, res) => {
-  if (scheduleState.isProcessing) {
+app.post('/api/schedule/run-now', requireStudioAccess, async (req, res) => {
+  const { account } = req;
+  const rt = getRuntime(account.id);
+  if (rt.scheduleState.isProcessing) {
     return res.status(409).json({ success: false, message: 'Đang có tiến trình tạo video đang chạy.' });
   }
 
-  addLog('info', '⚡ Kích hoạt quét và xử lý hàng đợi ngay lập tức...');
+  addLog(account.id, 'info', '⚡ Kích hoạt quét và xử lý hàng đợi ngay lập tức...');
   res.json({ success: true, message: 'Bắt đầu quét ngay lập tức.' });
 
-  // Chạy ngay không cần chờ scheduleTimer
-  executeScheduledRun();
+  executeScheduledRun(account.id);
 });
 
 // Tương thích ngược với nút bật tắt cũ
-app.post('/api/worker/toggle', (req, res) => {
-  scheduleConfig.enabled = !scheduleConfig.enabled;
-  if (scheduleConfig.enabled) {
-    addLog('info', `🟢 Đã BẬT lịch chạy tự động.`);
-    executeScheduledRun();
+app.post('/api/worker/toggle', requireStudioAccess, (req, res) => {
+  const { account } = req;
+  const rt = getRuntime(account.id);
+  rt.scheduleConfig.enabled = !rt.scheduleConfig.enabled;
+  if (rt.scheduleConfig.enabled) {
+    addLog(account.id, 'info', `🟢 Đã BẬT lịch chạy tự động.`);
+    executeScheduledRun(account.id);
   } else {
-    addLog('warning', '🔴 Đã TẮT lịch chạy tự động.');
-    if (scheduleTimer) clearTimeout(scheduleTimer);
-    scheduleState.nextRunTime = null;
-    scheduleState.currentStatus = 'Đã tạm dừng';
+    addLog(account.id, 'warning', '🔴 Đã TẮT lịch chạy tự động.');
+    if (rt.scheduleTimer) clearTimeout(rt.scheduleTimer);
+    rt.scheduleState.nextRunTime = null;
+    rt.scheduleState.currentStatus = 'Đã tạm dừng';
   }
-  res.json({ workerRunning: scheduleConfig.enabled });
+  res.json({ workerRunning: rt.scheduleConfig.enabled });
 });
 
 // 4b. Lên lịch đăng TikTok tự động theo KHUNG GIỜ CỐ ĐỊNH (TÁCH RIÊNG khỏi lịch tạo video ở trên)
 app.get('/api/tiktok/schedule', (req, res) => {
+  const rt = getRuntime(req.account.id);
   res.json({
     success: true,
-    config: tiktokScheduleConfig,
+    config: rt.tiktokScheduleConfig,
     state: {
-      ...tiktokScheduleState,
-      secondsUntilNextRun: tiktokScheduleConfig.enabled ? secondsUntilNextTikTokSlot() : null
+      ...rt.tiktokScheduleState,
+      secondsUntilNextRun: rt.tiktokScheduleConfig.enabled ? secondsUntilNextTikTokSlot(rt) : null
     }
   });
 });
 
 app.post('/api/tiktok/schedule/toggle', (req, res) => {
-  tiktokScheduleConfig.enabled = !tiktokScheduleConfig.enabled;
-  if (tiktokScheduleConfig.enabled) {
-    addLog('info', `🟢 Đã BẬT đăng TikTok tự động theo khung giờ: ${tiktokScheduleConfig.postHours.map(h => h + 'h').join(', ')} mỗi ngày.`);
-    startTikTokScheduleChecker();
+  const { account } = req;
+  const rt = getRuntime(account.id);
+  rt.tiktokScheduleConfig.enabled = !rt.tiktokScheduleConfig.enabled;
+  if (rt.tiktokScheduleConfig.enabled) {
+    addLog(account.id, 'info', `🟢 Đã BẬT đăng TikTok tự động theo khung giờ: ${rt.tiktokScheduleConfig.postHours.map(h => h + 'h').join(', ')} mỗi ngày.`);
+    startTikTokScheduleChecker(account.id);
   } else {
-    addLog('warning', '🔴 Đã TẮT đăng TikTok tự động.');
-    stopTikTokScheduleChecker();
-    tiktokScheduleState.currentStatus = 'Đã tạm dừng';
+    addLog(account.id, 'warning', '🔴 Đã TẮT đăng TikTok tự động.');
+    stopTikTokScheduleChecker(account.id);
+    rt.tiktokScheduleState.currentStatus = 'Đã tạm dừng';
   }
   res.json({
     success: true,
-    enabled: tiktokScheduleConfig.enabled,
-    config: tiktokScheduleConfig,
-    state: tiktokScheduleState
+    enabled: rt.tiktokScheduleConfig.enabled,
+    config: rt.tiktokScheduleConfig,
+    state: rt.tiktokScheduleState
   });
 });
 
 app.post('/api/tiktok/schedule/config', (req, res) => {
+  const { account } = req;
+  const rt = getRuntime(account.id);
   const { postHours } = req.body;
   if (Array.isArray(postHours)) {
     const cleaned = postHours
       .map(h => parseInt(h, 10))
       .filter(h => Number.isInteger(h) && h >= 0 && h <= 23);
     if (cleaned.length > 0) {
-      tiktokScheduleConfig.postHours = [...new Set(cleaned)].sort((a, b) => a - b);
+      rt.tiktokScheduleConfig.postHours = [...new Set(cleaned)].sort((a, b) => a - b);
     }
   }
-  addLog('info', `⚙️ Đã cập nhật khung giờ đăng TikTok tự động: ${tiktokScheduleConfig.postHours.map(h => h + 'h').join(', ')}.`);
-  res.json({ success: true, config: tiktokScheduleConfig, state: tiktokScheduleState });
+  addLog(account.id, 'info', `⚙️ Đã cập nhật khung giờ đăng TikTok tự động: ${rt.tiktokScheduleConfig.postHours.map(h => h + 'h').join(', ')}.`);
+  res.json({ success: true, config: rt.tiktokScheduleConfig, state: rt.tiktokScheduleState });
 });
 
 // 5. Chạy tạo video cho 1 dòng cụ thể từ Google Sheet
-app.post('/api/queue/run-item', async (req, res) => {
+app.post('/api/queue/run-item', requireStudioAccess, async (req, res) => {
+  const { cfg, account } = req;
+  const rt = getRuntime(account.id);
   const { row } = req.body;
   if (!row) return res.status(400).json({ error: 'Thiếu thông tin hàng' });
 
-  addLog('info', `🚀 Nhận lệnh xử lý hàng #${row.rowNumber} (${row['Tên Sản Phẩm']})...`);
-  currentProcessingItem = { productName: row['Tên Sản Phẩm'], status: 'Đang khởi chạy luồng xử lý...', startTime: Date.now() };
+  addLog(account.id, 'info', `🚀 Nhận lệnh xử lý hàng #${row.rowNumber} (${row['Tên Sản Phẩm']})...`);
+  rt.currentProcessingItem = { productName: row['Tên Sản Phẩm'], status: 'Đang khởi chạy luồng xử lý...', startTime: Date.now() };
 
   res.json({ success: true, message: `Bắt đầu xử lý hàng #${row.rowNumber}` });
 
-  (async () => {
+  withRenderLock(async () => {
     try {
-      await processRow(row, addLog);
+      await processRow(row, (lvl, msg) => addLog(account.id, lvl, msg), cfg);
     } catch (e) {
-      addLog('error', `Lỗi xử lý hàng #${row.rowNumber}: ${e.message}`);
+      addLog(account.id, 'error', `Lỗi xử lý hàng #${row.rowNumber}: ${e.message}`);
     } finally {
-      currentProcessingItem = null;
+      rt.currentProcessingItem = null;
     }
-  })();
+  });
 });
 
 // 6. Kích hoạt Đăng bài TikTok (đồng bộ n8n)
 app.post('/api/tiktok/publish', async (req, res) => {
+  const { cfg, account } = req;
   const { rowNumber, row } = req.body;
   if (!rowNumber && !row) return res.status(400).json({ error: 'Thiếu thông tin hàng' });
 
   let targetRow = row;
   if (!targetRow && rowNumber) {
-    targetRow = await Google.getRowByNumber(rowNumber);
+    targetRow = await Google.getRowByNumber(rowNumber, cfg);
   }
 
   if (!targetRow) {
     return res.status(404).json({ error: 'Không tìm thấy dữ liệu hàng' });
   }
 
-  addLog('info', `📱 Nhận yêu cầu đăng TikTok cho hàng #${targetRow.rowNumber} ("${targetRow['Tên Sản Phẩm']}")...`);
+  addLog(account.id, 'info', `📱 Nhận yêu cầu đăng TikTok cho hàng #${targetRow.rowNumber} ("${targetRow['Tên Sản Phẩm']}")...`);
   res.json({ success: true, message: `Bắt đầu tiến trình đăng TikTok cho hàng #${targetRow.rowNumber}` });
 
   (async () => {
     try {
-      await triggerTikTokUpload(targetRow, addLog);
+      await triggerTikTokUpload(targetRow, (lvl, msg) => addLog(account.id, lvl, msg), cfg);
     } catch (err) {
-      addLog('error', `Lỗi đăng TikTok hàng #${targetRow.rowNumber}: ${err.message}`);
+      addLog(account.id, 'error', `Lỗi đăng TikTok hàng #${targetRow.rowNumber}: ${err.message}`);
     }
   })();
 });
 
-// Cấu hình TikTok Direct Engine
+// Cấu hình TikTok Direct Engine (theo account)
 app.get('/api/tiktok/config', (req, res) => {
+  const { cfg } = req;
   res.json({
-    configured: isTikTokConfigured(),
-    hasSession: !!CONFIG.TIKTOK_SESSION_JSON,
-    proxyUrl: CONFIG.TIKTOK_PROXY_URL || '',
-    autoPublish: CONFIG.TIKTOK_AUTO_PUBLISH
+    configured: isTikTokConfigured(cfg.TIKTOK_SESSION_JSON),
+    hasSession: !!cfg.TIKTOK_SESSION_JSON,
+    proxyUrl: cfg.TIKTOK_PROXY_URL || '',
+    autoPublish: cfg.TIKTOK_AUTO_PUBLISH
   });
 });
 
-app.post('/api/tiktok/config', (req, res) => {
+app.post('/api/tiktok/config', async (req, res) => {
+  const { account } = req;
   const { sessionJson, proxyUrl, autoPublish } = req.body;
-  
+  const patch = {};
+
   if (sessionJson !== undefined) {
     const normalized = normalizeTikTokSession(sessionJson);
-    CONFIG.TIKTOK_SESSION_JSON = normalized || (sessionJson || '').trim();
+    patch.TIKTOK_SESSION_JSON = normalized || (sessionJson || '').trim();
   }
   if (proxyUrl !== undefined) {
-    CONFIG.TIKTOK_PROXY_URL = (proxyUrl || '').trim();
+    patch.TIKTOK_PROXY_URL = (proxyUrl || '').trim();
   }
   if (autoPublish !== undefined) {
-    CONFIG.TIKTOK_AUTO_PUBLISH = !!autoPublish;
+    patch.TIKTOK_AUTO_PUBLISH = !!autoPublish;
   }
 
-  try {
-    const envPath = path.resolve('.env');
-    if (fs.existsSync(envPath)) {
-      let content = fs.readFileSync(envPath, 'utf8');
-      
-      const updateEnvVar = (name, val) => {
-        if (content.includes(`${name}=`)) {
-          content = content.replace(new RegExp(`${name}=.*`), `${name}=${val}`);
-        } else {
-          content += `\n${name}=${val}\n`;
-        }
-      };
+  const updated = await updateAccountSettings(account.id, patch);
+  const newCfg = getAccountConfig(updated);
 
-      if (sessionJson !== undefined) {
-        const toSave = normalizeTikTokSession(CONFIG.TIKTOK_SESSION_JSON) || CONFIG.TIKTOK_SESSION_JSON;
-        updateEnvVar('TIKTOK_SESSION_JSON', Buffer.from(toSave, 'utf8').toString('base64'));
-      }
-      if (proxyUrl !== undefined) {
-        updateEnvVar('TIKTOK_PROXY_URL', CONFIG.TIKTOK_PROXY_URL);
-      }
-      if (autoPublish !== undefined) {
-        updateEnvVar('TIKTOK_AUTO_PUBLISH', CONFIG.TIKTOK_AUTO_PUBLISH ? 'true' : 'false');
-      }
-
-      fs.writeFileSync(envPath, content, 'utf8');
-    }
-  } catch (e) {
-    console.error('Lỗi ghi .env:', e.message);
-  }
-
-  addLog('info', `⚙️ Đã cập nhật cấu hình TikTok Engine: Session=${isTikTokConfigured() ? 'Hợp lệ' : 'Trống/Chưa đúng định dạng'}, Auto-Publish=${CONFIG.TIKTOK_AUTO_PUBLISH ? 'Bật' : 'Tắt'}`);
+  addLog(account.id, 'info', `⚙️ Đã cập nhật cấu hình TikTok Engine: Session=${isTikTokConfigured(newCfg.TIKTOK_SESSION_JSON) ? 'Hợp lệ' : 'Trống/Chưa đúng định dạng'}, Auto-Publish=${newCfg.TIKTOK_AUTO_PUBLISH ? 'Bật' : 'Tắt'}`);
   res.json({
     success: true,
-    configured: isTikTokConfigured(),
-    autoPublish: CONFIG.TIKTOK_AUTO_PUBLISH
+    configured: isTikTokConfigured(newCfg.TIKTOK_SESSION_JSON),
+    autoPublish: newCfg.TIKTOK_AUTO_PUBLISH
   });
 });
 
-// Cấu hình Webhook n8n cho TikTok (Dự phòng nếu cần)
+// Cấu hình Webhook n8n cho TikTok (theo account, dự phòng nếu cần)
 app.get('/api/config/n8n', (req, res) => {
+  const { cfg } = req;
   res.json({
-    webhookUrl: CONFIG.N8N_TIKTOK_WEBHOOK_URL || '',
-    configured: !!CONFIG.N8N_TIKTOK_WEBHOOK_URL
+    webhookUrl: cfg.N8N_TIKTOK_WEBHOOK_URL || '',
+    configured: !!cfg.N8N_TIKTOK_WEBHOOK_URL
   });
 });
 
-app.post('/api/config/n8n', (req, res) => {
+app.post('/api/config/n8n', async (req, res) => {
+  const { account } = req;
   const { webhookUrl } = req.body;
-  CONFIG.N8N_TIKTOK_WEBHOOK_URL = (webhookUrl || '').trim();
+  const updated = await updateAccountSettings(account.id, { N8N_TIKTOK_WEBHOOK_URL: (webhookUrl || '').trim() });
+  const newCfg = getAccountConfig(updated);
 
-  try {
-    const envPath = path.resolve('.env');
-    if (fs.existsSync(envPath)) {
-      let content = fs.readFileSync(envPath, 'utf8');
-      if (content.includes('N8N_TIKTOK_WEBHOOK_URL=')) {
-        content = content.replace(/N8N_TIKTOK_WEBHOOK_URL=.*/g, `N8N_TIKTOK_WEBHOOK_URL=${CONFIG.N8N_TIKTOK_WEBHOOK_URL}`);
-      } else {
-        content += `\nN8N_TIKTOK_WEBHOOK_URL=${CONFIG.N8N_TIKTOK_WEBHOOK_URL}\n`;
-      }
-      fs.writeFileSync(envPath, content, 'utf8');
+  addLog(account.id, 'info', `⚙️ Đã lưu cấu hình n8n Webhook: ${newCfg.N8N_TIKTOK_WEBHOOK_URL || '(Chưa điền, dùng chế độ Cron Sheet)'}`);
+  res.json({ success: true, webhookUrl: newCfg.N8N_TIKTOK_WEBHOOK_URL });
+});
+
+// Cấu hình nghiệp vụ chung theo account (Sheet ID, Drive folder, Telegram, Gemini key, Flow Project, Engine)
+app.get('/api/config/account', (req, res) => {
+  const { cfg } = req;
+  res.json({
+    success: true,
+    settings: {
+      SHEET_DOCUMENT_ID: cfg.SHEET_DOCUMENT_ID || '',
+      DRIVE_OUTPUT_FOLDER_ID: cfg.DRIVE_OUTPUT_FOLDER_ID || '',
+      FLOW_PROJECT_ID: cfg.FLOW_PROJECT_ID || '',
+      TELEGRAM_BOT_TOKEN: cfg.TELEGRAM_BOT_TOKEN || '',
+      TELEGRAM_CHAT_ID: cfg.TELEGRAM_CHAT_ID || '',
+      GEMINI_API_KEY: cfg.GEMINI_API_KEY || '',
+      ENGINE: cfg.ENGINE || 'vids'
     }
-  } catch (e) {}
+  });
+});
 
-  addLog('info', `⚙️ Đã lưu cấu hình n8n Webhook: ${CONFIG.N8N_TIKTOK_WEBHOOK_URL || '(Chưa điền, dùng chế độ Cron Sheet)'}`);
-  res.json({ success: true, webhookUrl: CONFIG.N8N_TIKTOK_WEBHOOK_URL });
+app.post('/api/config/account', async (req, res) => {
+  const { account } = req;
+  const allowed = ['SHEET_DOCUMENT_ID', 'DRIVE_OUTPUT_FOLDER_ID', 'FLOW_PROJECT_ID', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID', 'GEMINI_API_KEY', 'ENGINE'];
+  const patch = {};
+  for (const key of allowed) {
+    if (req.body[key] !== undefined) patch[key] = String(req.body[key]).trim();
+  }
+  await updateAccountSettings(account.id, patch);
+  addLog(account.id, 'info', '⚙️ Đã cập nhật cấu hình tài khoản (Sheet/Drive/Telegram/Gemini/Engine).');
+  res.json({ success: true });
 });
 
 // 6. Gợi ý kịch bản video AI từ tên sản phẩm
 app.post('/api/ai/suggest-script', async (req, res) => {
+  const { cfg, account } = req;
   const { productName } = req.body;
   if (!productName) return res.status(400).json({ error: 'Thiếu tên sản phẩm' });
 
   try {
-    addLog('info', `🤖 Gemini đang viết kịch bản và caption review TikTok cho: ${productName}...`);
+    addLog(account.id, 'info', `🤖 Gemini đang viết kịch bản và caption review TikTok cho: ${productName}...`);
     const script = `Review chân thực ${productName}: Thiết kế hiện đại, tiện lợi. Dùng thử siêu ưng ý, xem ngay tại giỏ hàng góc trái bên dưới nha!`;
-    const caption = await AI.generateCaption({ productName, contentVideo: script });
-    
-    addLog('success', '✨ Đã tạo kịch bản và caption review thành công!');
+    const caption = await AI.generateCaption({ productName, contentVideo: script }, cfg.GEMINI_API_KEY);
+
+    addLog(account.id, 'success', '✨ Đã tạo kịch bản và caption review thành công!');
     res.json({ success: true, script, caption });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// 7. Kích hoạt mở Chrome đăng nhập Ultra
-app.post('/api/chrome/login', (req, res) => {
-  addLog('info', '🌐 Đang khởi động Chrome để đăng nhập tài khoản Google Ultra...');
-  exec('npm run login', (err, stdout, stderr) => {
-    if (err) addLog('error', `Lỗi mở Chrome: ${err.message}`);
-    else addLog('success', 'Đã mở cửa sổ Chrome thành công.');
+// 7. Kích hoạt mở Chrome đăng nhập Ultra — thao tác trên Chrome profile DÙNG CHUNG của engine Google
+// Vids (xem Giai đoạn 2 trong kế hoạch để tách riêng theo account), nên chỉ admin mới được gọi.
+app.post('/api/chrome/login', requireAdmin, (req, res) => {
+  exec('npm run login', (err) => {
+    if (err) console.error(`Lỗi mở Chrome: ${err.message}`);
   });
-  res.json({ success: true, message: 'Chrome đang được mở trên máy tính của bạn.' });
+  res.json({ success: true, message: 'Chrome đang được mở trên máy chủ.' });
 });
 
-// OAuth 2.0 cho Google Drive (giống n8n)
+// OAuth 2.0 cho Google Drive — mỗi account tự kết nối Drive riêng của họ
 app.get('/api/auth/google/url', (req, res) => {
   try {
     const url = getAuthUrl();
@@ -604,30 +740,34 @@ app.get('/api/auth/google/url', (req, res) => {
 });
 
 app.get('/api/auth/google/callback', async (req, res) => {
+  const { account } = req;
   const { code } = req.query;
   if (!code) return res.status(400).send('Thiếu OAuth authorization code.');
 
   try {
-    const result = await handleCallback(code);
-    addLog('success', `🎉 Đã kết nối Google Drive OAuth2 thành công với tài khoản: ${result.email}!`);
+    const result = await handleCallback(code, account.id);
+    addLog(account.id, 'success', `🎉 Đã kết nối Google Drive OAuth2 thành công với tài khoản: ${result.email}!`);
     res.redirect('/#settings?oauth=success');
   } catch (err) {
-    addLog('error', `Lỗi kết nối Google Drive OAuth2: ${err.message}`);
+    addLog(account.id, 'error', `Lỗi kết nối Google Drive OAuth2: ${err.message}`);
     res.redirect('/#settings?oauth=error&message=' + encodeURIComponent(err.message));
   }
 });
 
-app.get('/api/auth/google/status', (req, res) => {
-  res.json(getOAuthStatus());
+app.get('/api/auth/google/status', async (req, res) => {
+  res.json(await getOAuthStatus(req.account.id));
 });
 
-app.post('/api/auth/google/disconnect', (req, res) => {
-  disconnectOAuth();
-  addLog('warning', 'Đã ngắt kết nối Google Drive OAuth2.');
+app.post('/api/auth/google/disconnect', async (req, res) => {
+  await disconnectOAuth(req.account.id);
+  addLog(req.account.id, 'warning', 'Đã ngắt kết nối Google Drive OAuth2.');
   res.json({ success: true });
 });
 
-app.post('/api/auth/google/config', (req, res) => {
+// Cấu hình OAuth Client ID/Secret — dùng CHUNG cho toàn bộ app (giống mọi SaaS dùng 1 OAuth app,
+// mỗi account tự cấp quyền/token riêng), nên chỉ admin mới được đổi, tránh 1 tenant làm hỏng OAuth
+// của tất cả mọi người.
+app.post('/api/auth/google/config', requireAdmin, (req, res) => {
   const { clientId, clientSecret } = req.body;
   if (!clientId || !clientSecret) {
     return res.status(400).json({ error: 'Vui lòng cung cấp cả Client ID và Client Secret' });
@@ -636,10 +776,9 @@ app.post('/api/auth/google/config', (req, res) => {
   CONFIG.GOOGLE_CLIENT_ID = clientId.trim();
   CONFIG.GOOGLE_CLIENT_SECRET = clientSecret.trim();
 
-  // Lưu vào .env
   try {
     const envPath = path.resolve('.env');
-    let envContent = fs.readFileSync(envPath, 'utf-8');
+    let envContent = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf-8') : '';
     if (!envContent.includes('GOOGLE_CLIENT_ID=')) {
       envContent += `\nGOOGLE_CLIENT_ID=${clientId.trim()}\nGOOGLE_CLIENT_SECRET=${clientSecret.trim()}\n`;
     } else {
@@ -647,7 +786,6 @@ app.post('/api/auth/google/config', (req, res) => {
       envContent = envContent.replace(/GOOGLE_CLIENT_SECRET=.*/g, `GOOGLE_CLIENT_SECRET=${clientSecret.trim()}`);
     }
     fs.writeFileSync(envPath, envContent);
-    addLog('success', 'Đã lưu cấu hình Google OAuth Client ID & Secret thành công!');
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: 'Lỗi ghi file .env: ' + e.message });
@@ -655,22 +793,23 @@ app.post('/api/auth/google/config', (req, res) => {
 });
 
 // 8. Tạo video trực tiếp từ Studio & Tự động đẩy Drive + Telegram
-app.post('/api/create-video', async (req, res) => {
-  const { productName, script, ratio = '9:16', duration = '10s' } = req.body;
+app.post('/api/create-video', requireStudioAccess, async (req, res) => {
+  const { cfg, account } = req;
+  const rt = getRuntime(account.id);
+  const { productName, script } = req.body;
   if (!productName) return res.status(400).json({ error: 'Vui lòng nhập tên sản phẩm' });
 
-  addLog('info', `🚀 Bắt đầu tạo video từ Studio cho sản phẩm: "${productName}"`);
-  currentProcessingItem = { productName, status: 'Đang tạo video bằng Google Vids...', startTime: Date.now() };
+  addLog(account.id, 'info', `🚀 Bắt đầu tạo video từ Studio cho sản phẩm: "${productName}"`);
+  rt.currentProcessingItem = { productName, status: 'Đang tạo video bằng Google Vids...', startTime: Date.now() };
 
   res.json({ success: true, message: 'Đã tiếp nhận yêu cầu. Theo dõi tiến trình trong nhật ký.' });
 
-  // Xử lý bất đồng bộ
-  (async () => {
+  withRenderLock(async () => {
     const workDir = path.resolve(`temp/run_${Date.now()}`);
     fs.mkdirSync(workDir, { recursive: true });
 
     try {
-      addLog('info', '🎬 Đang kết nối Google Vids với gói Ultra (0 credit)...');
+      addLog(account.id, 'info', '🎬 Đang kết nối Google Vids...');
       const fullPrompt = `tạo cho tôi 1 video review sản phẩm ${productName}, người mẫu giới thiệu tự nhiên, cầm sản phẩm trên tay mỉm cười. Khung hình dọc 9:16. ${script || ''}`.trim();
 
       const videoFile = await createVideoInGoogleVids({
@@ -678,67 +817,63 @@ app.post('/api/create-video', async (req, res) => {
         outputDir: workDir
       });
 
-      addLog('success', `🎉 Video đã được tạo thành công: ${path.basename(videoFile)}`);
+      addLog(account.id, 'success', `🎉 Video đã được tạo thành công: ${path.basename(videoFile)}`);
 
-      // Gắn logo kênh vào góc dưới phải
       let fileToUpload = videoFile;
-      const logoFile = await resolveLogoPath(null, (lvl, msg) => addLog(lvl, msg));
+      const logoFile = await resolveLogoPath(null, (lvl, msg) => addLog(account.id, lvl, msg), cfg);
       if (logoFile && fs.existsSync(logoFile)) {
-        addLog('info', `🏷️ Gắn logo kênh: ${path.basename(logoFile)} (góc dưới phải)...`);
+        addLog(account.id, 'info', `🏷️ Gắn logo kênh: ${path.basename(logoFile)} (góc dưới phải)...`);
         const videoWithLogo = path.join(workDir, 'video_with_logo.mp4');
         try {
           await mergeVideosWithFfmpeg([videoFile], logoFile, videoWithLogo);
           if (fs.existsSync(videoWithLogo)) fileToUpload = videoWithLogo;
         } catch (logoErr) {
-          addLog('warning', `Lỗi gắn logo: ${logoErr.message}`);
+          addLog(account.id, 'warning', `Lỗi gắn logo: ${logoErr.message}`);
         }
       }
 
-      // Tải video trực tiếp lên Google Drive (không lưu cục bộ vào videos/)
       let finalVideoUrl = '';
       try {
-        addLog('info', '☁️ Đang upload video lên Google Drive...');
-        const fileId = await Google.uploadVideoToDrive(fileToUpload, `${Date.now()}_${productName}.mp4`);
+        addLog(account.id, 'info', '☁️ Đang upload video lên Google Drive...');
+        const fileId = await Google.uploadVideoToDrive(fileToUpload, `${Date.now()}_${productName}.mp4`, cfg);
         finalVideoUrl = `https://drive.google.com/file/d/${fileId}`;
-        addLog('success', `Đã lưu Drive: ${finalVideoUrl}`);
+        addLog(account.id, 'success', `Đã lưu Drive: ${finalVideoUrl}`);
 
-        // Xóa file video tạm sau khi đã tải lên Drive
         try {
           if (fs.existsSync(videoFile)) fs.unlinkSync(videoFile);
           if (fs.existsSync(fileToUpload)) fs.unlinkSync(fileToUpload);
         } catch (cleanErr) {}
       } catch (err) {
-        addLog('warning', `Upload Drive lỗi: ${err.message}`);
+        addLog(account.id, 'warning', `Upload Drive lỗi: ${err.message}`);
       }
 
-      // 2. Tạo caption TikTok
-      addLog('info', '📝 Đang dùng AI tạo Caption TikTok cuốn hút cho sản phẩm...');
+      addLog(account.id, 'info', '📝 Đang dùng AI tạo Caption TikTok cuốn hút cho sản phẩm...');
       let caption = '';
-      if (CONFIG.GEMINI_API_KEY) {
-        caption = await AI.generateCaption({ productName, contentVideo: script });
+      if (cfg.GEMINI_API_KEY) {
+        caption = await AI.generateCaption({ productName, contentVideo: script }, cfg.GEMINI_API_KEY);
       } else {
         caption = AI.createSmartFallbackCaption(productName, script);
       }
 
-      // 3. Gửi thông báo Telegram
-      addLog('info', '📱 Đang gửi thông báo Telegram...');
-      await sendTelegram(`🟢 Review Sản Phẩm: Tạo Thành Công Video "${productName}" từ Studio Web!\n👉 Link Video: ${finalVideoUrl}\n\n📝 Caption: ${caption}`);
+      addLog(account.id, 'info', '📱 Đang gửi thông báo Telegram...');
+      await sendTelegram(`🟢 Review Sản Phẩm: Tạo Thành Công Video "${productName}" từ Studio Web!\n👉 Link Video: ${finalVideoUrl}\n\n📝 Caption: ${caption}`, cfg);
 
-      addLog('success', '✨ Toàn bộ quy trình Studio hoàn tất 100%!');
+      addLog(account.id, 'success', '✨ Toàn bộ quy trình Studio hoàn tất 100%!');
     } catch (err) {
-      addLog('error', `Tạo video thất bại: ${err.message}`);
+      addLog(account.id, 'error', `Tạo video thất bại: ${err.message}`);
     } finally {
-      currentProcessingItem = null;
+      rt.currentProcessingItem = null;
     }
-  })();
+  });
 });
 
 // 9. Lấy danh sách video từ Google Drive (Kho Video)
 app.get('/api/videos', async (req, res) => {
+  const { cfg, account } = req;
   try {
-    let drive = await getAuthenticatedDriveClient();
-    if (!drive && CONFIG.GOOGLE_SERVICE_ACCOUNT_JSON) {
-      const auth = Google.getAuth();
+    let drive = await getAuthenticatedDriveClient(account.id);
+    if (!drive && cfg.GOOGLE_SERVICE_ACCOUNT_JSON) {
+      const auth = Google.getAuth(cfg);
       drive = google.drive({ version: 'v3', auth });
     }
 
@@ -747,7 +882,7 @@ app.get('/api/videos', async (req, res) => {
     }
 
     const driveRes = await drive.files.list({
-      q: `'${CONFIG.DRIVE_OUTPUT_FOLDER_ID}' in parents and trashed = false`,
+      q: `'${cfg.DRIVE_OUTPUT_FOLDER_ID}' in parents and trashed = false`,
       fields: 'files(id, name, mimeType, size, createdTime, thumbnailLink, webViewLink, webContentLink)',
       orderBy: 'createdTime desc',
       pageSize: 50,
@@ -792,13 +927,15 @@ app.get('/api/videos', async (req, res) => {
 
 // ================= SHOWCASE API ENDPOINTS =================
 app.post('/api/showcase/check', async (req, res) => {
+  const { cfg, account } = req;
   try {
     const { productId, productName } = req.body;
     if (!productId) return res.status(400).json({ error: 'Thiếu productId' });
     const result = await ensureProductInShowcase({
       productId,
       productName,
-      logger: addLog
+      sessionJson: cfg.TIKTOK_SESSION_JSON,
+      logger: (lvl, msg) => addLog(account.id, lvl, msg)
     });
     res.json(result);
   } catch (err) {
@@ -807,10 +944,11 @@ app.post('/api/showcase/check', async (req, res) => {
 });
 
 app.post('/api/showcase/add', async (req, res) => {
+  const { cfg } = req;
   try {
     const { productId } = req.body;
     if (!productId) return res.status(400).json({ error: 'Thiếu productId' });
-    const result = await addProductToShowcase(productId);
+    const result = await addProductToShowcase(productId, cfg.TIKTOK_SESSION_JSON);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -818,77 +956,86 @@ app.post('/api/showcase/add', async (req, res) => {
 });
 
 app.get('/api/showcase/list', async (req, res) => {
+  const { cfg } = req;
   try {
-    const products = await getShowcaseProducts(null, req.query.refresh === 'true');
+    const products = await getShowcaseProducts(cfg.TIKTOK_SESSION_JSON, req.query.refresh === 'true');
     res.json({ total: products.length, products });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// ================= HỆ THỐNG LẬP LỊCH SCHEDULE WORKER =================
+// ================= HỆ THỐNG LẬP LỊCH SCHEDULE WORKER (theo account) =================
 
-function scheduleNextRun(delayMs = null) {
-  if (scheduleTimer) {
-    clearTimeout(scheduleTimer);
-    scheduleTimer = null;
+function scheduleNextRun(accountId, delayMs = null) {
+  const rt = getRuntime(accountId);
+  if (rt.scheduleTimer) {
+    clearTimeout(rt.scheduleTimer);
+    rt.scheduleTimer = null;
   }
 
-  if (!scheduleConfig.enabled) {
-    scheduleState.nextRunTime = null;
-    scheduleState.currentStatus = 'Đã tạm dừng';
+  if (!rt.scheduleConfig.enabled) {
+    rt.scheduleState.nextRunTime = null;
+    rt.scheduleState.currentStatus = 'Đã tạm dừng';
     return;
   }
 
-  const waitMs = delayMs !== null ? delayMs : (scheduleConfig.intervalSeconds * 1000);
-  scheduleState.nextRunTime = Date.now() + waitMs;
-  scheduleState.currentStatus = `Chờ đợt quét tiếp theo (${Math.round(waitMs / 1000)}s)...`;
+  const waitMs = delayMs !== null ? delayMs : (rt.scheduleConfig.intervalSeconds * 1000);
+  rt.scheduleState.nextRunTime = Date.now() + waitMs;
+  rt.scheduleState.currentStatus = `Chờ đợt quét tiếp theo (${Math.round(waitMs / 1000)}s)...`;
 
-  scheduleTimer = setTimeout(executeScheduledRun, waitMs);
+  rt.scheduleTimer = setTimeout(() => executeScheduledRun(accountId), waitMs);
 }
 
-async function executeScheduledRun() {
-  if (!scheduleConfig.enabled) return;
-  if (scheduleState.isProcessing) return;
+async function executeScheduledRun(accountId) {
+  const rt = getRuntime(accountId);
+  if (!rt.scheduleConfig.enabled) return;
+  if (rt.scheduleState.isProcessing) return;
+  if (!(await isAccountLicenseActive(accountId))) {
+    rt.scheduleConfig.enabled = false;
+    rt.scheduleState.currentStatus = 'Đã tạm dừng (license không còn hiệu lực)';
+    return;
+  }
 
-  // Kiểm tra khung giờ hoạt động nếu có bật
-  if (scheduleConfig.timeRangeEnabled) {
+  const cfg = await loadFreshCfg(accountId);
+  if (!cfg) return;
+
+  if (rt.scheduleConfig.timeRangeEnabled) {
     const currentHour = new Date().getHours();
-    if (currentHour < scheduleConfig.startHour || currentHour >= scheduleConfig.endHour) {
-      scheduleState.currentStatus = `Ngoài khung giờ hẹn (${scheduleConfig.startHour}h - ${scheduleConfig.endHour}h)`;
-      scheduleNextRun(60000);
+    if (currentHour < rt.scheduleConfig.startHour || currentHour >= rt.scheduleConfig.endHour) {
+      rt.scheduleState.currentStatus = `Ngoài khung giờ hẹn (${rt.scheduleConfig.startHour}h - ${rt.scheduleConfig.endHour}h)`;
+      scheduleNextRun(accountId, 60000);
       return;
     }
   }
 
-  scheduleState.isProcessing = true;
-  scheduleState.lastRunTime = Date.now();
-  scheduleState.currentStatus = 'Đang quét hàng đợi Google Sheets...';
+  rt.scheduleState.isProcessing = true;
+  rt.scheduleState.lastRunTime = Date.now();
+  rt.scheduleState.currentStatus = 'Đang quét hàng đợi Google Sheets...';
 
   try {
     let processedInThisBatch = 0;
-    while (scheduleConfig.enabled && processedInThisBatch < (scheduleConfig.maxPerBatch || 10)) {
-      const row = await Google.fetchQueueRow();
+    while (rt.scheduleConfig.enabled && processedInThisBatch < (rt.scheduleConfig.maxPerBatch || 10)) {
+      const row = await Google.fetchQueueRow(cfg);
       if (!row) {
-        addLog('info', 'ℹ️ Hàng đợi Google Sheets không còn dòng nào "Chờ Tạo".');
-        scheduleState.currentStatus = 'Hết hàng chờ tạo';
+        addLog(accountId, 'info', 'ℹ️ Hàng đợi Google Sheets không còn dòng nào "Chờ Tạo".');
+        rt.scheduleState.currentStatus = 'Hết hàng chờ tạo';
         break;
       }
 
-      scheduleState.currentProcessingRow = row.rowNumber;
-      scheduleState.currentStatus = `Đang xử lý hàng #${row.rowNumber} (${row['Tên Sản Phẩm']})...`;
-      currentProcessingItem = { productName: row['Tên Sản Phẩm'], status: `Đang xử lý hàng #${row.rowNumber}...`, startTime: Date.now() };
+      rt.scheduleState.currentProcessingRow = row.rowNumber;
+      rt.scheduleState.currentStatus = `Đang xử lý hàng #${row.rowNumber} (${row['Tên Sản Phẩm']})...`;
+      rt.currentProcessingItem = { productName: row['Tên Sản Phẩm'], status: `Đang xử lý hàng #${row.rowNumber}...`, startTime: Date.now() };
 
-      addLog('info', `⏰ [Schedule] Tự động xử lý hàng #${row.rowNumber}: "${row['Tên Sản Phẩm']}"`);
-      await processRow(row, addLog);
+      addLog(accountId, 'info', `⏰ [Schedule] Tự động xử lý hàng #${row.rowNumber}: "${row['Tên Sản Phẩm']}"`);
+      await withRenderLock(() => processRow(row, (lvl, msg) => addLog(accountId, lvl, msg), cfg));
 
       processedInThisBatch++;
-      scheduleState.totalProcessedSession++;
-      currentProcessingItem = null;
-      scheduleState.currentProcessingRow = null;
+      rt.scheduleState.totalProcessedSession++;
+      rt.currentProcessingItem = null;
+      rt.scheduleState.currentProcessingRow = null;
 
-      // Nếu không bật chế độ làm liên tiếp, xử lý 1 hàng rồi nghỉ hết chu kỳ
-      if (!scheduleConfig.continuous) {
+      if (!rt.scheduleConfig.continuous) {
         break;
       }
 
@@ -896,99 +1043,106 @@ async function executeScheduledRun() {
       await new Promise(r => setTimeout(r, 3000));
     }
   } catch (err) {
-    addLog('error', `[Schedule] Lỗi trong tiến trình tự động: ${err.message}`);
-    scheduleState.currentStatus = `Lỗi: ${err.message}`;
+    addLog(accountId, 'error', `[Schedule] Lỗi trong tiến trình tự động: ${err.message}`);
+    rt.scheduleState.currentStatus = `Lỗi: ${err.message}`;
   } finally {
-    scheduleState.isProcessing = false;
-    currentProcessingItem = null;
-    scheduleState.currentProcessingRow = null;
+    rt.scheduleState.isProcessing = false;
+    rt.currentProcessingItem = null;
+    rt.scheduleState.currentProcessingRow = null;
 
-    if (scheduleConfig.enabled) {
-      scheduleNextRun();
+    if (rt.scheduleConfig.enabled) {
+      scheduleNextRun(accountId);
     } else {
-      scheduleState.currentStatus = 'Đã tạm dừng';
+      rt.scheduleState.currentStatus = 'Đã tạm dừng';
     }
   }
 }
 
-// ================= HỆ THỐNG LẬP LỊCH ĐĂNG TIKTOK TỰ ĐỘNG THEO KHUNG GIỜ (TÁCH RIÊNG) =================
+// ================= HỆ THỐNG LẬP LỊCH ĐĂNG TIKTOK TỰ ĐỘNG THEO KHUNG GIỜ (theo account) =================
 
 const pad2 = (n) => String(n).padStart(2, '0');
 
-// Khoá định danh duy nhất cho 1 khung giờ trong 1 ngày cụ thể, dùng để tránh đăng trùng nếu bộ
-// đếm kiểm tra trúng khung giờ đó nhiều lần (mỗi 30s) trước khi sang giờ kế tiếp.
 function slotKeyFor(date, hour) {
   return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}-${pad2(hour)}`;
 }
 
-function secondsUntilNextTikTokSlot() {
-  if (!tiktokScheduleConfig.postHours || tiktokScheduleConfig.postHours.length === 0) return null;
+function secondsUntilNextTikTokSlot(rt) {
+  if (!rt.tiktokScheduleConfig.postHours || rt.tiktokScheduleConfig.postHours.length === 0) return null;
   const now = new Date();
-  const sorted = [...tiktokScheduleConfig.postHours].sort((a, b) => a - b);
+  const sorted = [...rt.tiktokScheduleConfig.postHours].sort((a, b) => a - b);
   for (const h of sorted) {
     const candidate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, 0, 0, 0);
     if (candidate.getTime() > now.getTime()) {
       return Math.round((candidate.getTime() - now.getTime()) / 1000);
     }
   }
-  // Hết khung giờ hôm nay -> khung giờ đầu tiên của ngày mai
   const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, sorted[0], 0, 0, 0);
   return Math.round((tomorrow.getTime() - now.getTime()) / 1000);
 }
 
-function startTikTokScheduleChecker() {
-  if (tiktokScheduleCheckInterval) return; // đã chạy rồi, không tạo thêm interval
-  tiktokScheduleState.currentStatus = 'Đang chờ khung giờ đăng tiếp theo...';
-  tiktokScheduleCheckInterval = setInterval(checkTikTokScheduleSlot, 30000); // kiểm tra mỗi 30s
-  checkTikTokScheduleSlot(); // kiểm tra ngay khi vừa bật, phòng trường hợp bật đúng lúc trong khung giờ
+function startTikTokScheduleChecker(accountId) {
+  const rt = getRuntime(accountId);
+  if (rt.tiktokScheduleCheckInterval) return;
+  rt.tiktokScheduleState.currentStatus = 'Đang chờ khung giờ đăng tiếp theo...';
+  rt.tiktokScheduleCheckInterval = setInterval(() => checkTikTokScheduleSlot(accountId), 30000);
+  checkTikTokScheduleSlot(accountId);
 }
 
-function stopTikTokScheduleChecker() {
-  if (tiktokScheduleCheckInterval) {
-    clearInterval(tiktokScheduleCheckInterval);
-    tiktokScheduleCheckInterval = null;
+function stopTikTokScheduleChecker(accountId) {
+  const rt = getRuntime(accountId);
+  if (rt.tiktokScheduleCheckInterval) {
+    clearInterval(rt.tiktokScheduleCheckInterval);
+    rt.tiktokScheduleCheckInterval = null;
   }
 }
 
-async function checkTikTokScheduleSlot() {
-  if (!tiktokScheduleConfig.enabled) return;
-  if (tiktokScheduleState.isProcessing) return;
+async function checkTikTokScheduleSlot(accountId) {
+  const rt = getRuntime(accountId);
+  if (!rt.tiktokScheduleConfig.enabled) return;
+  if (rt.tiktokScheduleState.isProcessing) return;
+  if (!(await isAccountLicenseActive(accountId))) {
+    rt.tiktokScheduleConfig.enabled = false;
+    stopTikTokScheduleChecker(accountId);
+    rt.tiktokScheduleState.currentStatus = 'Đã tạm dừng (license không còn hiệu lực)';
+    return;
+  }
 
   const now = new Date();
   const currentHour = now.getHours();
-  if (!tiktokScheduleConfig.postHours.includes(currentHour)) return;
+  if (!rt.tiktokScheduleConfig.postHours.includes(currentHour)) return;
 
   const slotKey = slotKeyFor(now, currentHour);
-  if (tiktokScheduleState.lastPostedKey === slotKey) return; // khung giờ này đã xử lý rồi, bỏ qua
+  if (rt.tiktokScheduleState.lastPostedKey === slotKey) return;
 
-  tiktokScheduleState.isProcessing = true;
-  tiktokScheduleState.lastRunTime = Date.now();
-  tiktokScheduleState.currentStatus = `Đang đăng video cho khung giờ ${currentHour}h...`;
+  const cfg = await loadFreshCfg(accountId);
+  if (!cfg) return;
+
+  rt.tiktokScheduleState.isProcessing = true;
+  rt.tiktokScheduleState.lastRunTime = Date.now();
+  rt.tiktokScheduleState.currentStatus = `Đang đăng video cho khung giờ ${currentHour}h...`;
 
   try {
-    // runTikTokWorker tự tìm hàng "Chờ Đăng" cũ nhất và đăng đúng 1 video mỗi lần gọi — KHÔNG
-    // bao giờ tạo video mới, chỉ đăng video đã có sẵn, đúng tách biệt với lịch tạo video.
-    const result = await runTikTokWorker(addLog);
-    tiktokScheduleState.lastPostedKey = slotKey; // đánh dấu đã xử lý khung giờ này (dù có video hay không)
+    const result = await runTikTokWorker((lvl, msg) => addLog(accountId, lvl, msg), cfg);
+    rt.tiktokScheduleState.lastPostedKey = slotKey;
     if (result) {
-      tiktokScheduleState.totalPostedSession++;
-      tiktokScheduleState.currentStatus = `Đã đăng xong video cho khung giờ ${currentHour}h.`;
+      rt.tiktokScheduleState.totalPostedSession++;
+      rt.tiktokScheduleState.currentStatus = `Đã đăng xong video cho khung giờ ${currentHour}h.`;
     } else {
-      tiktokScheduleState.currentStatus = `Khung giờ ${currentHour}h: không có video nào đang "Chờ Đăng".`;
+      rt.tiktokScheduleState.currentStatus = `Khung giờ ${currentHour}h: không có video nào đang "Chờ Đăng".`;
     }
   } catch (err) {
-    addLog('error', `[TikTok Schedule] Lỗi: ${err.message}`);
-    tiktokScheduleState.currentStatus = `Lỗi: ${err.message}`;
-    tiktokScheduleState.lastPostedKey = slotKey; // vẫn đánh dấu để tránh thử lại dồn dập trong cùng giờ
+    addLog(accountId, 'error', `[TikTok Schedule] Lỗi: ${err.message}`);
+    rt.tiktokScheduleState.currentStatus = `Lỗi: ${err.message}`;
+    rt.tiktokScheduleState.lastPostedKey = slotKey;
   } finally {
-    tiktokScheduleState.isProcessing = false;
+    rt.tiktokScheduleState.isProcessing = false;
   }
 }
 
 // Khởi động server
 app.listen(PORT, () => {
-  addLog('success', `🌟 Product Video Generator UI Server đang chạy tại: http://localhost:${PORT}`);
   console.log(`\n======================================================`);
   console.log(`🌐 TRUY CẬP GIAO DIỆN TẠI: http://localhost:${PORT}`);
+  console.log(`🔧 TRANG QUẢN TRỊ LICENSE: http://localhost:${PORT}/admin.html`);
   console.log(`======================================================\n`);
 });

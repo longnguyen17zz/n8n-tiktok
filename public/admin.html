@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Quản trị License Key - VideoGen AI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="index.css?v=8">
+  <style>
+    .admin-wrap {
+      max-width: 1000px;
+      margin: 0 auto;
+      padding: 32px 20px 60px;
+    }
+    .admin-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .admin-header h1 {
+      font-size: 1.4rem;
+    }
+    .admin-secret-box {
+      display: flex;
+      gap: 8px;
+    }
+    .admin-secret-box input {
+      background: var(--bg-input);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-sm);
+      color: var(--text-main);
+      padding: 8px 12px;
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      width: 220px;
+    }
+    .admin-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-lg);
+      padding: 20px;
+      margin-bottom: 24px;
+    }
+    .admin-card h2 {
+      font-size: 1rem;
+      margin-bottom: 14px;
+    }
+    .create-form {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: flex-end;
+    }
+    .create-form .field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .create-form label {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+    }
+    .create-form input {
+      background: var(--bg-input);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-sm);
+      color: var(--text-main);
+      padding: 9px 12px;
+      font-size: 0.85rem;
+      min-width: 160px;
+    }
+    .new-key-result {
+      margin-top: 14px;
+      padding: 12px 14px;
+      border-radius: var(--radius-sm);
+      background: rgba(16, 185, 129, 0.12);
+      border: 1px solid rgba(16, 185, 129, 0.35);
+      font-family: var(--font-mono);
+      font-size: 0.95rem;
+      display: none;
+    }
+    table.admin-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+    table.admin-table th, table.admin-table td {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border-glass);
+    }
+    table.admin-table th {
+      color: var(--text-secondary);
+      font-weight: 600;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .key-code {
+      font-family: var(--font-mono);
+    }
+    .status-pill {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .status-pill.active { background: rgba(16, 185, 129, 0.15); color: var(--accent-emerald); }
+    .status-pill.revoked { background: rgba(244, 63, 94, 0.15); color: var(--accent-rose); }
+    .unlock-box {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 60vh;
+    }
+  </style>
+</head>
+<body>
+  <div id="unlockBox" class="unlock-box">
+    <div class="login-card" style="max-width:360px;">
+      <h2>Trang quản trị License</h2>
+      <p class="login-subtitle">Nhập Admin Secret để quản lý license key</p>
+      <input type="password" id="adminSecretInput" class="login-input" placeholder="ADMIN_SECRET" autocomplete="off">
+      <button id="btnUnlock" class="btn btn-primary login-submit">Vào trang quản trị</button>
+      <p class="login-error" id="unlockError" style="display:none;"></p>
+    </div>
+  </div>
+
+  <div id="adminApp" class="admin-wrap" style="display:none;">
+    <div class="admin-header">
+      <h1>🔑 Quản trị License Key</h1>
+      <button id="btnLockAgain" class="btn btn-secondary btn-sm">Khoá lại</button>
+    </div>
+
+    <div class="admin-card">
+      <h2>Tạo License Key mới</h2>
+      <form id="createKeyForm" class="create-form">
+        <div class="field">
+          <label>Tên khách / ghi chú</label>
+          <input type="text" id="newKeyLabel" placeholder="Khách A">
+        </div>
+        <div class="field">
+          <label>Gói hiển thị</label>
+          <input type="text" id="newKeyPlan" placeholder="Gói Ultra 20x - 1.000 video/tháng">
+        </div>
+        <div class="field">
+          <label>Hết hạn (tuỳ chọn)</label>
+          <input type="date" id="newKeyExpires">
+        </div>
+        <button type="submit" class="btn btn-primary">+ Tạo key</button>
+      </form>
+      <div class="new-key-result" id="newKeyResult"></div>
+    </div>
+
+    <div class="admin-card">
+      <h2>Danh sách License Key</h2>
+      <table class="admin-table">
+        <thead>
+          <tr>
+            <th>Key</th>
+            <th>Khách</th>
+            <th>Gói</th>
+            <th>Trạng thái</th>
+            <th>Studio (Vids)</th>
+            <th>Hết hạn</th>
+            <th>Tạo lúc</th>
+            <th>Hành động</th>
+          </tr>
+        </thead>
+        <tbody id="licenseTableBody">
+          <tr><td colspan="8">Đang tải...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script src="admin.js?v=1"></script>
+</body>
+</html>

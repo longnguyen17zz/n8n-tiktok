@@ -1,7 +1,17 @@
 import { GoogleGenAI } from '@google/genai';
 import { CONFIG } from './config.js';
 
-const ai = new GoogleGenAI({ apiKey: CONFIG.GEMINI_API_KEY });
+// Mỗi account có thể dùng GEMINI_API_KEY riêng (hoặc fallback key dùng chung) -> cache 1 client
+// SDK theo từng apiKey thay vì 1 client singleton duy nhất tạo lúc import module.
+const clientCache = new Map();
+function getClient(apiKey) {
+  const key = apiKey || CONFIG.GEMINI_API_KEY;
+  if (!clientCache.has(key)) {
+    clientCache.set(key, new GoogleGenAI({ apiKey: key }));
+  }
+  return clientCache.get(key);
+}
+
 const CANDIDATE_MODELS = ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.5-flash'];
 
 const withTimeout = (promise, ms, label) => Promise.race([
@@ -9,7 +19,8 @@ const withTimeout = (promise, ms, label) => Promise.race([
   new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} quá ${ms}ms, có thể model đang quá tải`)), ms))
 ]);
 
-export async function generateContentWithFallback(contents, options = {}) {
+export async function generateContentWithFallback(contents, options = {}, apiKey) {
+  const ai = getClient(apiKey);
   let lastErr = null;
   for (const m of CANDIDATE_MODELS) {
     try {
@@ -26,54 +37,54 @@ export async function generateContentWithFallback(contents, options = {}) {
   throw lastErr || new Error('Không thể kết nối tới các model Gemini.');
 }
 
-export async function analyzeProduct(imageBuffer, productName) {
+export async function analyzeProduct(imageBuffer, productName, apiKey) {
   const prompt = `Bạn là chuyên gia phân tích sản phẩm quảng cáo video. Tên sản phẩm: ${productName}. Hãy mô tả chi tiết bằng TIẾNG VIỆT trong 1 đoạn văn liên tục về kiểu dáng, màu sắc, chất liệu và điểm nhấn đặc trưng của sản phẩm. Chỉ trả về văn bản tiếng Việt thuần túy, không định dạng markdown hay gạch đầu dòng.`;
   const contents = [
     { text: prompt },
     { inlineData: { mimeType: 'image/jpeg', data: imageBuffer.toString('base64') } }
   ];
-  const res = await generateContentWithFallback(contents);
+  const res = await generateContentWithFallback(contents, {}, apiKey);
   return res.text.trim();
 }
 
-export async function analyzeModel(imageBuffer) {
+export async function analyzeModel(imageBuffer, apiKey) {
   const prompt = `Phân tích chi tiết người mẫu trong bức ảnh này để làm prompt tạo video. Trả về đúng 1 đoạn văn bằng TIẾNG VIỆT mô tả sắc thái khuôn mặt, làn da, đôi mắt, sống mũi, khóe môi, kiểu tóc và trang phục. Chỉ trả về văn bản thuần túy bằng tiếng Việt.`;
   const contents = [
     { text: prompt },
     { inlineData: { mimeType: 'image/jpeg', data: imageBuffer.toString('base64') } }
   ];
-  const res = await generateContentWithFallback(contents);
+  const res = await generateContentWithFallback(contents, {}, apiKey);
   return res.text.trim();
 }
 
-export async function analyzeBackground(imageBuffer) {
+export async function analyzeBackground(imageBuffer, apiKey) {
   const prompt = `Phân tích không gian bối cảnh, phòng ốc, ánh sáng, tường và đồ nội thất trong bức ảnh này. Hoàn toàn bỏ qua con người. Trả về đúng 1 đoạn văn bằng TIẾNG VIỆT tự nhiên mô tả không gian sang trọng, ánh sáng ấm áp.`;
   const contents = [
     { text: prompt },
     { inlineData: { mimeType: 'image/jpeg', data: imageBuffer.toString('base64') } }
   ];
-  const res = await generateContentWithFallback(contents);
+  const res = await generateContentWithFallback(contents, {}, apiKey);
   return res.text.trim();
 }
 
-export async function generateImagePrompts(numPrompts, productAnalysis, modelAnalysis, bgAnalysis, contentVideo) {
+export async function generateImagePrompts(numPrompts, productAnalysis, modelAnalysis, bgAnalysis, contentVideo, apiKey) {
   const prompt = `Return ONLY a valid JSON array of ${numPrompts} strings. Each string is a safe 9:16 vertical product advertising keyframe prompt combining:
 Product: ${productAnalysis}
 Model: ${modelAnalysis}
 Background: ${bgAnalysis}
 Scenario: ${contentVideo}
 Do not use markdown blocks, return only raw JSON array like ["prompt 1", "prompt 2"].`;
-  
-  const res = await generateContentWithFallback(prompt);
+
+  const res = await generateContentWithFallback(prompt, {}, apiKey);
   const raw = res.text.replace(/```json|```/g, '').trim();
   return JSON.parse(raw);
 }
 
-export async function generateVideoPrompts(numVideos, productName, contentVideo, imagePrompt) {
+export async function generateVideoPrompts(numVideos, productName, contentVideo, imagePrompt, apiKey) {
   const prompt = `Generate exactly ${numVideos} short Veo 3 video prompt single-line strings in a JSON schema: {"prompts": ["string1", "string2"]}.
 Scenario: ${contentVideo}. Product: ${productName}. Initial Frame: ${imagePrompt}. Spoken language: Vietnamese (25-28 words). Final clip ends with: "xem ngay tại giỏ hàng bên góc trái bên dưới ạ". Output only raw JSON.`;
 
-  const res = await generateContentWithFallback(prompt);
+  const res = await generateContentWithFallback(prompt, {}, apiKey);
   const raw = res.text.replace(/```json|```/g, '').trim();
   const parsed = JSON.parse(raw);
   return parsed.prompts || parsed;
@@ -96,7 +107,7 @@ export function createSmartFallbackCaption(productName, contentVideo, productAna
   return `${hook} ${body}${cta}\n\n${tags}`;
 }
 
-export async function generateCaption(arg) {
+export async function generateCaption(arg, apiKey) {
   let productName = '';
   let contentVideo = '';
   let productAnalysis = '';
@@ -127,7 +138,7 @@ Hãy viết 1 đoạn Caption đăng TikTok hoàn chỉnh, tự nhiên và cuố
 Chỉ trả về đúng văn bản Caption hoàn chỉnh, không giải thích.`;
 
   try {
-    const res = await generateContentWithFallback(prompt);
+    const res = await generateContentWithFallback(prompt, {}, apiKey);
     const text = res.text?.trim();
     if (text && text.length > 20) return text;
   } catch (e) {

@@ -3,25 +3,28 @@ import axios from 'axios';
 import fs from 'fs';
 import { CONFIG } from './config.js';
 
-let authClient = null;
+// Mỗi account có thể có GOOGLE_SERVICE_ACCOUNT_JSON riêng -> cache JWT client theo từng chuỗi JSON
+// thay vì 1 client singleton duy nhất (tránh account này dùng nhầm service account của account khác).
+const authClientCache = new Map();
 
-export function getAuth() {
-  if (!authClient) {
-    let raw = (CONFIG.GOOGLE_SERVICE_ACCOUNT_JSON || '').trim();
-    if (raw.startsWith("'")) raw = raw.slice(1);
-    if (raw.endsWith("'")) raw = raw.slice(0, -1);
-    raw = raw.trim();
-    const credentials = JSON.parse(raw);
-    authClient = new google.auth.JWT({
-      email: credentials.client_email,
-      key: credentials.private_key,
-      scopes: [
-        'https://www.googleapis.com/auth/spreadsheets',
-        'https://www.googleapis.com/auth/drive'
-      ]
-    });
-  }
-  return authClient;
+export function getAuth(cfg = CONFIG) {
+  let raw = (cfg.GOOGLE_SERVICE_ACCOUNT_JSON || '').trim();
+  if (authClientCache.has(raw)) return authClientCache.get(raw);
+
+  if (raw.startsWith("'")) raw = raw.slice(1);
+  if (raw.endsWith("'")) raw = raw.slice(0, -1);
+  raw = raw.trim();
+  const credentials = JSON.parse(raw);
+  const client = new google.auth.JWT({
+    email: credentials.client_email,
+    key: credentials.private_key,
+    scopes: [
+      'https://www.googleapis.com/auth/spreadsheets',
+      'https://www.googleapis.com/auth/drive'
+    ]
+  });
+  authClientCache.set(raw, client);
+  return client;
 }
 
 export function extractDriveFileId(url) {
@@ -36,12 +39,12 @@ export function extractDriveFileId(url) {
   return null;
 }
 
-export async function fetchQueueRow() {
-  const auth = getAuth();
+export async function fetchQueueRow(cfg = CONFIG) {
+  const auth = getAuth(cfg);
   const sheets = google.sheets({ version: 'v4', auth });
-  
+
   const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: CONFIG.SHEET_DOCUMENT_ID,
+    spreadsheetId: cfg.SHEET_DOCUMENT_ID,
     range: 'Thiết Lập!A:Z'
   });
 
@@ -64,12 +67,12 @@ export async function fetchQueueRow() {
   return null;
 }
 
-export async function fetchQueueRows(limit = 20) {
-  const auth = getAuth();
+export async function fetchQueueRows(limit = 20, cfg = CONFIG) {
+  const auth = getAuth(cfg);
   const sheets = google.sheets({ version: 'v4', auth });
-  
+
   const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: CONFIG.SHEET_DOCUMENT_ID,
+    spreadsheetId: cfg.SHEET_DOCUMENT_ID,
     range: 'Thiết Lập!A:Z'
   });
 
@@ -100,12 +103,12 @@ export async function fetchQueueRows(limit = 20) {
 // bao nhiêu dòng) — mặc định KHÔNG giới hạn số lượng item trả về, để không bao giờ bỏ sót các hàng
 // "Chờ Đăng" nằm xa hơn N hàng gần nhất (từng gây bug: hàng mới nhất toàn "Đã Đăng" nên limit nhỏ
 // làm ẩn mất các hàng chờ đăng cũ hơn). Chỉ truyền limit khi thực sự cần giới hạn (vd. UI phân trang).
-export async function fetchTikTokQueueRows(limit = Infinity) {
-  const auth = getAuth();
+export async function fetchTikTokQueueRows(limit = Infinity, cfg = CONFIG) {
+  const auth = getAuth(cfg);
   const sheets = google.sheets({ version: 'v4', auth });
 
   const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: CONFIG.SHEET_DOCUMENT_ID,
+    spreadsheetId: cfg.SHEET_DOCUMENT_ID,
     range: 'Thiết Lập!A:Z'
   });
 
@@ -131,16 +134,16 @@ export async function fetchTikTokQueueRows(limit = Infinity) {
   return items;
 }
 
-export async function getRowByNumber(rowNumber) {
-  const auth = getAuth();
+export async function getRowByNumber(rowNumber, cfg = CONFIG) {
+  const auth = getAuth(cfg);
   const sheets = google.sheets({ version: 'v4', auth });
   const headerRes = await sheets.spreadsheets.values.get({
-    spreadsheetId: CONFIG.SHEET_DOCUMENT_ID,
+    spreadsheetId: cfg.SHEET_DOCUMENT_ID,
     range: 'Thiết Lập!A1:Z1'
   });
   const headers = (headerRes.data.values && headerRes.data.values[0]) || [];
   const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: CONFIG.SHEET_DOCUMENT_ID,
+    spreadsheetId: cfg.SHEET_DOCUMENT_ID,
     range: `Thiết Lập!A${rowNumber}:Z${rowNumber}`
   });
   const rowValues = (res.data.values && res.data.values[0]) || [];
@@ -149,11 +152,11 @@ export async function getRowByNumber(rowNumber) {
   return data;
 }
 
-export async function getAccountCookie() {
-  const auth = getAuth();
+export async function getAccountCookie(cfg = CONFIG) {
+  const auth = getAuth(cfg);
   const sheets = google.sheets({ version: 'v4', auth });
   const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: CONFIG.SHEET_DOCUMENT_ID,
+    spreadsheetId: cfg.SHEET_DOCUMENT_ID,
     range: 'Tài Khoản!A:Z'
   });
   const rows = res.data.values;
@@ -169,19 +172,19 @@ export async function getAccountCookie() {
       return {
         cookie: rows[i][cookieIdx],
         nanoai: rows[i][nanoIdx] || 'nano_T8sy1HzP699bzAJaRNlJxfzLmJDFKEAnGCfQ02xtpisHHvmlRD4DFn3I53DvSKSg',
-        projectId: sheetProjectId || CONFIG.FLOW_PROJECT_ID
+        projectId: sheetProjectId || cfg.FLOW_PROJECT_ID
       };
     }
   }
   throw new Error('Không tìm thấy tài khoản có Trạng Thái = true trên sheet Tài Khoản');
 }
 
-export async function updateRowStatus(rowNumber, status, extraFields = {}) {
-  const auth = getAuth();
+export async function updateRowStatus(rowNumber, status, extraFields = {}, cfg = CONFIG) {
+  const auth = getAuth(cfg);
   const sheets = google.sheets({ version: 'v4', auth });
-  
+
   const headerRes = await sheets.spreadsheets.values.get({
-    spreadsheetId: CONFIG.SHEET_DOCUMENT_ID,
+    spreadsheetId: cfg.SHEET_DOCUMENT_ID,
     range: 'Thiết Lập!1:1'
   });
   const headers = headerRes.data.values[0];
@@ -192,7 +195,7 @@ export async function updateRowStatus(rowNumber, status, extraFields = {}) {
     if (colIdx === -1) return null;
     const colLetter = String.fromCharCode(65 + colIdx);
     return sheets.spreadsheets.values.update({
-      spreadsheetId: CONFIG.SHEET_DOCUMENT_ID,
+      spreadsheetId: cfg.SHEET_DOCUMENT_ID,
       range: `Thiết Lập!${colLetter}${rowNumber}`,
       valueInputOption: 'USER_ENTERED',
       requestBody: { values: [[val]] }
@@ -204,15 +207,15 @@ export async function updateRowStatus(rowNumber, status, extraFields = {}) {
 
 import { uploadVideoViaOAuth, getOAuthStatus, getAuthenticatedDriveClient } from './oauth.js';
 
-export async function downloadFileAsBase64(urlOrId) {
+export async function downloadFileAsBase64(urlOrId, cfg = CONFIG) {
   // Chấp nhận cả URL Drive đầy đủ lẫn File ID trần (không có dấu / hay ?)
   const trimmed = (urlOrId || '').trim();
   const driveId = extractDriveFileId(trimmed) || (/^[a-zA-Z0-9_-]{10,}$/.test(trimmed) ? trimmed : null);
   let buffer;
   if (driveId) {
-    let drive = await getAuthenticatedDriveClient();
+    let drive = await getAuthenticatedDriveClient(cfg.accountId);
     if (!drive) {
-      const auth = getAuth();
+      const auth = getAuth(cfg);
       drive = google.drive({ version: 'v3', auth });
     }
     const res = await drive.files.get({ fileId: driveId, alt: 'media' }, { responseType: 'arraybuffer' });
@@ -224,17 +227,17 @@ export async function downloadFileAsBase64(urlOrId) {
   return buffer;
 }
 
-export async function uploadVideoToDrive(filePath, fileName) {
+export async function uploadVideoToDrive(filePath, fileName, cfg = CONFIG) {
   if (!fs.existsSync(filePath) || fs.statSync(filePath).size < 1000) {
     throw new Error(`File video rỗng hoặc không tồn tại, không thể tải lên Drive: ${filePath}`);
   }
 
   // Ưu tiên 1: Upload bằng tài khoản chính chủ qua OAuth2 (như n8n)
-  const oauthStatus = getOAuthStatus();
+  const oauthStatus = await getOAuthStatus(cfg.accountId);
   if (oauthStatus.connected) {
     try {
       console.log(`[Drive] 🚀 Đang tải video lên Google Drive qua tài khoản OAuth (${oauthStatus.email})...`);
-      const fileId = await uploadVideoViaOAuth(filePath, fileName);
+      const fileId = await uploadVideoViaOAuth(filePath, fileName, cfg.accountId, cfg.DRIVE_OUTPUT_FOLDER_ID);
       console.log(`[Drive] ✅ Đã tải video lên Google Drive thành công! File ID: ${fileId}`);
       return fileId;
     } catch (err) {
@@ -247,11 +250,11 @@ export async function uploadVideoToDrive(filePath, fileName) {
 
   // Ưu tiên 2: Fallback qua Service Account
   try {
-    const auth = getAuth();
+    const auth = getAuth(cfg);
     const drive = google.drive({ version: 'v3', auth });
     const fileMetadata = {
       name: fileName,
-      parents: [CONFIG.DRIVE_OUTPUT_FOLDER_ID]
+      parents: [cfg.DRIVE_OUTPUT_FOLDER_ID]
     };
     const media = {
       mimeType: 'video/mp4',
