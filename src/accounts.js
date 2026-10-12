@@ -5,8 +5,11 @@ import { pool } from './db.js';
 import { CONFIG } from './config.js';
 
 // Các field cấu hình nghiệp vụ tách riêng theo từng account (license key). Field nào account chưa
-// tự cấu hình thì fallback về giá trị chung trong CONFIG/.env (giữ tương thích ngược cho account
-// bootstrap được seed từ .env hiện tại).
+// tự cấu hình thì lấy giá trị RỖNG/an toàn mặc định (KHÔNG fallback về CONFIG/.env — CONFIG chứa
+// dữ liệu nghiệp vụ thật của chủ app, nếu fallback thì account khách mới tạo sẽ vô tình thấy/đụng
+// được Sheet, Drive, Telegram, TikTok Session... thật của chủ app). Account bootstrap của chủ app
+// không bị ảnh hưởng vì ensureBootstrapAccount() đã ghi thẳng các giá trị này vào settings_json
+// của chính nó ngay lúc tạo, nên nó đọc từ settings riêng chứ không cần fallback.
 export const ACCOUNT_SETTINGS_FIELDS = [
   'SHEET_DOCUMENT_ID',
   'DRIVE_OUTPUT_FOLDER_ID',
@@ -21,6 +24,37 @@ export const ACCOUNT_SETTINGS_FIELDS = [
   'TIKTOK_AUTO_PUBLISH',
   'TIKTOK_POST_MODE',
   'N8N_TIKTOK_WEBHOOK_URL'
+];
+
+// Giá trị mặc định an toàn khi account CHƯA tự cấu hình field đó.
+const ACCOUNT_SETTINGS_DEFAULTS = {
+  SHEET_DOCUMENT_ID: '',
+  DRIVE_OUTPUT_FOLDER_ID: '',
+  FLOW_PROJECT_ID: '',
+  TELEGRAM_BOT_TOKEN: '',
+  TELEGRAM_CHAT_ID: '',
+  GEMINI_API_KEY: '',
+  GOOGLE_SERVICE_ACCOUNT_JSON: '',
+  ENGINE: 'vids',
+  TIKTOK_SESSION_JSON: '',
+  TIKTOK_PROXY_URL: '',
+  TIKTOK_AUTO_PUBLISH: false,
+  TIKTOK_POST_MODE: 'manual',
+  N8N_TIKTOK_WEBHOOK_URL: ''
+};
+
+// Field thật sự dùng chung cho toàn app (OAuth client app identity, cổng, mật khẩu admin...) —
+// KHÔNG phải dữ liệu nghiệp vụ, nên lấy thẳng từ CONFIG cho mọi account.
+const SHARED_CONFIG_FIELDS = [
+  'GOOGLE_CLIENT_ID',
+  'GOOGLE_CLIENT_SECRET',
+  'GOOGLE_REDIRECT_URI',
+  'PORT',
+  'ADMIN_SECRET',
+  'SESSION_COOKIE_NAME',
+  'NODE_ENV',
+  'SETTING_SHEET_GID',
+  'ACCOUNT_SHEET_GID'
 ];
 
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 ngày
@@ -188,15 +222,19 @@ export async function getAccountDriveTokens(accountId) {
   return account ? account.driveOAuthTokens : null;
 }
 
-// Merge cấu hình theo account (settings_json) đè lên giá trị mặc định dùng chung trong CONFIG.
-// Field nào account chưa set (undefined/null/'') thì lấy từ CONFIG làm fallback.
+// Ghép cấu hình của riêng account (settings_json) với các field dùng chung của app (SHARED_CONFIG_FIELDS).
+// Field nghiệp vụ nào account chưa tự cấu hình thì lấy giá trị RỖNG/an toàn (ACCOUNT_SETTINGS_DEFAULTS),
+// KHÔNG bao giờ fallback về dữ liệu thật trong CONFIG — tránh lộ Sheet/Drive/Telegram/TikTok của account khác.
 export function getAccountConfig(account) {
-  const cfg = { ...CONFIG, accountId: account.id };
+  const cfg = { accountId: account.id };
+  for (const field of SHARED_CONFIG_FIELDS) {
+    cfg[field] = CONFIG[field];
+  }
   for (const field of ACCOUNT_SETTINGS_FIELDS) {
     const accountValue = account.settings[field];
-    if (accountValue !== undefined && accountValue !== null && accountValue !== '') {
-      cfg[field] = accountValue;
-    }
+    cfg[field] = (accountValue !== undefined && accountValue !== null && accountValue !== '')
+      ? accountValue
+      : ACCOUNT_SETTINGS_DEFAULTS[field];
   }
   return cfg;
 }
