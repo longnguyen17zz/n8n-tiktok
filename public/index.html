@@ -685,14 +685,17 @@
 
             <div class="settings-card">
               <h3>Google Sheets & Thư mục Drive đích</h3>
-              <p class="settings-desc">Quản lý hàng đợi sản phẩm và tự động upload video hoàn thành.</p>
+              <p class="settings-desc">Quản lý hàng đợi sản phẩm và tự động upload video hoàn thành. Mỗi tài khoản tự nhập Sheet/Drive riêng của mình.</p>
               <div class="form-group mt-2">
                 <label>Sheet Document ID</label>
-                <input type="text" class="input-sm" value="1PmES7DW57525MR2j6Ab4CjZDrvgPmr3CWZcuM0eMmVw" readonly>
+                <input type="text" id="inputSheetDocumentId" class="input-sm" placeholder="Dán Sheet Document ID của bạn...">
               </div>
               <div class="form-group mt-2">
                 <label>Drive Output Folder ID</label>
-                <input type="text" class="input-sm" value="1J5GhIPlemmMWPmxWhrsRvtcUJAlo3SCD" readonly>
+                <input type="text" id="inputDriveFolderId" class="input-sm" placeholder="Dán Drive Folder ID của bạn...">
+              </div>
+              <div class="actions-row mt-3">
+                <button class="btn btn-primary btn-sm" onclick="saveAccountConfig()">Lưu cấu hình Sheet/Drive</button>
               </div>
             </div>
 
@@ -782,10 +785,17 @@
 
             <div class="settings-card">
               <h3>Telegram Bot</h3>
-              <p class="settings-desc">Tự động gửi thông báo kèm đường link xem video ngay khi hoàn tất.</p>
-              <div class="settings-status mt-2">
-                <span class="status-indicator online"></span>
-                <span>Chat ID: <code>5683477257</code></span>
+              <p class="settings-desc">Tự động gửi thông báo kèm đường link xem video ngay khi hoàn tất. Mỗi tài khoản tự nhập Bot Token/Chat ID riêng của mình.</p>
+              <div class="form-group mt-2">
+                <label>Telegram Bot Token</label>
+                <input type="password" id="inputTelegramBotToken" class="input-sm" placeholder="Dán Bot Token của bạn...">
+              </div>
+              <div class="form-group mt-2">
+                <label>Chat ID</label>
+                <input type="text" id="inputTelegramChatId" class="input-sm" placeholder="Chat ID của bạn...">
+              </div>
+              <div class="actions-row mt-3">
+                <button class="btn btn-primary btn-sm" onclick="saveAccountConfig()">Lưu cấu hình Telegram</button>
               </div>
             </div>
           </div>

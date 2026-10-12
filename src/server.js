@@ -682,9 +682,9 @@ app.get('/api/config/account', (req, res) => {
       SHEET_DOCUMENT_ID: cfg.SHEET_DOCUMENT_ID || '',
       DRIVE_OUTPUT_FOLDER_ID: cfg.DRIVE_OUTPUT_FOLDER_ID || '',
       FLOW_PROJECT_ID: cfg.FLOW_PROJECT_ID || '',
-      TELEGRAM_BOT_TOKEN: cfg.TELEGRAM_BOT_TOKEN || '',
+      TELEGRAM_BOT_TOKEN_SET: !!cfg.TELEGRAM_BOT_TOKEN,
       TELEGRAM_CHAT_ID: cfg.TELEGRAM_CHAT_ID || '',
-      GEMINI_API_KEY: cfg.GEMINI_API_KEY || '',
+      GEMINI_API_KEY_SET: !!cfg.GEMINI_API_KEY,
       ENGINE: cfg.ENGINE || 'vids'
     }
   });

@@ -127,8 +127,51 @@ function startAppAfterLogin() {
   fetchStatus();
   fetchLogs();
   fetchVideos();
+  loadAccountConfig();
   setInterval(fetchStatus, 4000);
   setInterval(fetchLogs, 3000);
+}
+
+// Cấu hình Sheet/Drive/Telegram riêng của TỪNG account (không còn giá trị cứng chung cho mọi người)
+async function loadAccountConfig() {
+  try {
+    const res = await fetch(`${API_BASE}/api/config/account`);
+    if (!res.ok) return;
+    const data = await res.json();
+    const s = data.settings || {};
+    const setVal = (id, val) => { const el = document.getElementById(id); if (el && !el.matches(':focus')) el.value = val || ''; };
+    setVal('inputSheetDocumentId', s.SHEET_DOCUMENT_ID);
+    setVal('inputDriveFolderId', s.DRIVE_OUTPUT_FOLDER_ID);
+    setVal('inputTelegramChatId', s.TELEGRAM_CHAT_ID);
+    // Bot Token là secret, không hiển thị lại giá trị đã lưu — chỉ hiện placeholder khi đã có cấu hình
+    const tokenEl = document.getElementById('inputTelegramBotToken');
+    if (tokenEl) tokenEl.placeholder = s.TELEGRAM_BOT_TOKEN_SET ? 'Đã cấu hình — để trống nếu không muốn đổi' : 'Dán Bot Token của bạn...';
+  } catch (err) {}
+}
+
+async function saveAccountConfig() {
+  const payload = {
+    SHEET_DOCUMENT_ID: document.getElementById('inputSheetDocumentId')?.value.trim() || '',
+    DRIVE_OUTPUT_FOLDER_ID: document.getElementById('inputDriveFolderId')?.value.trim() || '',
+    TELEGRAM_CHAT_ID: document.getElementById('inputTelegramChatId')?.value.trim() || ''
+  };
+  const botToken = document.getElementById('inputTelegramBotToken')?.value.trim();
+  if (botToken) payload.TELEGRAM_BOT_TOKEN = botToken; // để trống = giữ nguyên token cũ, không ghi đè rỗng
+
+  try {
+    const res = await fetch(`${API_BASE}/api/config/account`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data.error || 'Lỗi lưu cấu hình');
+    alert('Đã lưu cấu hình thành công!');
+    loadAccountConfig();
+    fetchStatus();
+  } catch (err) {
+    alert('Lỗi: ' + err.message);
+  }
 }
 
 window.addEventListener('load', checkAuthAndInit);
