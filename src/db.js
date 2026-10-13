@@ -5,18 +5,33 @@ const { Pool } = pg;
 // Dùng PostgreSQL (Render Postgres free) thay vì SQLite file — vì gói Web Service Free của Render
 // KHÔNG hỗ trợ Persistent Disk (dữ liệu file sẽ mất mỗi lần instance ngủ/khởi động lại), trong khi
 // Render Postgres là service lưu trữ riêng biệt, không phụ thuộc đĩa của web service.
-const connectionString = process.env.DATABASE_URL;
-if (!connectionString) {
-  throw new Error(
-    'Thiếu biến môi trường DATABASE_URL. Tạo 1 Postgres database trên Render (hoặc dùng Postgres local khi dev), ' +
-    'rồi đặt connection string vào DATABASE_URL trong .env / Render Environment.'
-  );
+//
+// Pool được tạo LƯỜI (chỉ khi thực sự có query đầu tiên) thay vì ngay lúc import module — vì
+// src/accounts.js (qua src/oauth.js) bị import xuyên suốt từ src/google.js, mà script chạy qua
+// GitHub Actions (src/index.js, src/tiktok-scheduler.js) import tới google.js nhưng KHÔNG hề cần
+// database (không có DATABASE_URL trong secrets của workflow đó) — nếu throw ngay lúc import thì
+// các workflow GitHub Actions sẽ crash ngay cả khi chúng chẳng đụng gì tới DB.
+let _pool = null;
+function getRealPool() {
+  if (!_pool) {
+    const connectionString = process.env.DATABASE_URL;
+    if (!connectionString) {
+      throw new Error(
+        'Thiếu biến môi trường DATABASE_URL. Tạo 1 Postgres database trên Render (hoặc dùng Postgres local khi dev), ' +
+        'rồi đặt connection string vào DATABASE_URL trong .env / Render Environment.'
+      );
+    }
+    _pool = new Pool({
+      connectionString,
+      ssl: connectionString.includes('localhost') ? false : { rejectUnauthorized: false }
+    });
+  }
+  return _pool;
 }
 
-export const pool = new Pool({
-  connectionString,
-  ssl: connectionString.includes('localhost') ? false : { rejectUnauthorized: false }
-});
+export const pool = {
+  query: (...args) => getRealPool().query(...args)
+};
 
 export async function initDb() {
   await pool.query(`
